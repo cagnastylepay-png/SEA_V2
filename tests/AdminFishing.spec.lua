@@ -1,12 +1,13 @@
 return function(source)
  local now=0;local can=true;local equipFails=false;local equips=0;local deactivations=0
  local world={};function world:FindFirstChild()return nil end
- local char={};local tool={Parent=nil};local bag={}
+ local char={};local tool={Parent=nil,Name="Alien Rod"};local bag={}
  local humanoid={Health=100}
  function humanoid:EquipTool(t)equips+=1;if not equipFails then t.Parent=char end end
  function humanoid:UnequipTools()tool.Parent=bag end
  function char:FindFirstChildOfClass()return humanoid end
  function char:FindFirstChild()return nil end
+ function tool:GetAttribute(key)return key=="GearName"and self.Name end
  function tool:Deactivate()assert(self.Parent~=char,"unequip before release on cancellation");deactivations+=1 end
  function bag:GetChildren()return{tool}end
  local inside=false;local reveal={Visible=false};local gui={Enabled=true,FindFirstChild=function(_,key)return key=="Reveal"and reveal end}
@@ -33,6 +34,12 @@ return function(source)
  local zone=folder({Zone14Props=folder({Dock=dock}),LagoonFerry=folder(ferryChildren)})
  world.FindFirstChild=function(_,key)return key=="World"and folder({Build=folder({AlienBiomeZone=zone})})end
  local site=assert(f.DockSite({HipHeight=2}));assert(site.stand==Vector3.new(26,14.5,0)and site.target==course.Position,"stand inset on deck, target is Course direction")
+ assert(f.OnDock(Vector3.new(-25,12,3),site),"other valid dock positions must not require the exact endpoint")
+ assert(f.OnDock(Vector3.new(0,8,0),site),"visual dock height must not block equipment")
+ assert(not f.OnDock(Vector3.new(60,12,0),site),"outside the dock still requires navigation")
+ local originalIsRod=modules.Fishing.IsRod;modules.Fishing.IsRod=function(t)return t and t.Name~=nil end
+ for _,name in ipairs({"Alien Rod","Xeno Rod","Lunar Rod","Void Rod","Kraken Rod"})do local candidate={Name=name,GetAttribute=tool.GetAttribute};assert(f.RodTier(candidate)>0,"known alien rod "..name)end
+ local kraken={Name="Kraken Rod",GetAttribute=tool.GetAttribute};local oldBag=bag.GetChildren;bag.GetChildren=function()return{tool,kraken}end;assert(f.SelectRod()==kraken,"prefer strongest owned alien rod");bag.GetChildren=oldBag;modules.Fishing.IsRod=originalIsRod
  ferryChildren.Course=nil;assert(f.DockSite({HipHeight=2})==nil,"missing Course blocks the cast")
  assert(math.abs(f.PerfectSeconds(1.2,.8,.95)-1.0908334)<.00001)
  assert(not pcall(f.PerfectSeconds,1.2,.95,.8))

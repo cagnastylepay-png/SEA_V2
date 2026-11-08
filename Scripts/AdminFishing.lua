@@ -66,16 +66,25 @@ return function(ctx)
   until os.clock()>=deadline
   return false
  end
- -- Re-resolve and confirm the equipped rod before EVERY cast, including after inventory maintenance.
+ local rodTiers={alienrod=1,xenorod=2,lunarrod=3,voidrod=4,krakenrod=5}
+ function F.RodTier(tool)
+  if not tool or not fishing.IsRod(tool)then return 0 end
+  local name=tool:GetAttribute("GearName")or tool.Name
+  return rodTiers[tostring(name):lower():gsub("[^%a]","")]or 0
+ end
+ function F.SelectRod()
+  local tool=fishing.EquippedRod(player.Character);local tier=F.RodTier(tool)
+  if tier==0 then tool=nil end
+  local bag=player:FindFirstChildOfClass("Backpack")
+  if bag then for _,candidate in ipairs(bag:GetChildren())do
+   local rank=F.RodTier(candidate);if rank>tier then tool,tier=candidate,rank end
+  end end
+  return tool
+ end
+ -- Re-resolve and confirm an owned alien rod before EVERY cast.
  function F.Equip(token)
   local char,humanoid=parts();if not char or not humanoid or humanoid.Health<=0 then return nil end
-  local tool=fishing.EquippedRod(char)
-  if not tool then
-   local bag=player:FindFirstChildOfClass("Backpack")
-   if bag then for _,candidate in ipairs(bag:GetChildren())do
-    if fishing.IsRod(candidate)then tool=candidate;break end
-   end end
-  end
+  local tool=F.SelectRod()
   if not tool or not valid(token,char)then return nil end
   if tool.Parent~=char then humanoid:EquipTool(tool)end
   if not await(token,char,2,function()return tool.Parent==char and fishing.EquippedRod(char)==tool end)then return nil end
@@ -119,7 +128,10 @@ return function(ctx)
   local x=math.abs(direction.X)>.001 and math.max(0,bounds.X/2-margin)/math.abs(direction.X)or math.huge
   local z=math.abs(direction.Z)>.001 and math.max(0,bounds.Z/2-margin)/math.abs(direction.Z)or math.huge
   local stand=deck.Position+direction*math.min(x,z)+Vector3.new(0,bounds.Y/2+humanoid.HipHeight+2,0)
-  return{stand=stand,target=course.Position,deck=deck,course=course}
+  return{stand=stand,target=course.Position,deck=deck,course=course,bounds=bounds}
+ end
+ function F.OnDock(position,site)
+  return math.abs(position.X-site.deck.Position.X)<=site.bounds.X/2+6 and math.abs(position.Z-site.deck.Position.Z)<=site.bounds.Z/2+6
  end
  function F.Cycle(token)
   if os.clock()<F.RetryAt then task.wait(.25);return end
@@ -135,10 +147,11 @@ return function(ctx)
    local site=F.DockSite(humanoid);F.Site=site
    assert(site,"Dock ou LagoonFerry.Course absent : aucun autre lieu utilise")
    ctx.Status("PECHE : trajet vers le Dock alien")
-   if (root.Position-site.stand).Magnitude>5 then assert(ctx.FishingMove(site.stand,token),"Trajet peche interrompu")end
+   if not F.OnDock(root.Position,site)then assert(ctx.FishingMove(site.stand,token),"Trajet peche interrompu")end
    assert(valid(token,char),"Peche interrompue")
-   assert(Vector3.new(root.Position.X-site.stand.X,0,root.Position.Z-site.stand.Z).Magnitude<=5 and math.abs(root.Position.Y-site.stand.Y)<=3,"Arrivee sur le Dock non confirmee")
-   local tool=assert(F.Equip(token),"Canne absente ou equipement non confirme")
+   assert(F.OnDock(root.Position,site),"Personnage encore hors du quai")
+   ctx.Status("PECHE : equipement de la canne alien")
+   local tool=assert(F.Equip(token),"Alien/Xeno/Lunar/Void/Kraken Rod absente ou equipement non confirme")
    local camera=assert(world.CurrentCamera,"Camera absente");F.Camera=camera;F.CameraFrame=camera.CFrame
    -- Aim through the native controller's mouse/gamepad ray; verify the water before holding.
    for _=1,3 do
