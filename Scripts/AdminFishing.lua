@@ -87,6 +87,8 @@ return function(ctx)
   local tool=F.SelectRod()
   if not tool or not valid(token,char)then return nil end
   if tool.Parent~=char then humanoid:EquipTool(tool)end
+  -- Character.ChildAdded/Equipped bind the native Activated/Deactivated listeners asynchronously.
+  heartbeat:Wait();heartbeat:Wait()
   if not await(token,char,2,function()return tool.Parent==char and fishing.EquippedRod(char)==tool end)then return nil end
   F.Tool=tool;return tool
  end
@@ -162,9 +164,13 @@ return function(ctx)
    end
    assert(waterAt(char,fishing.Aim(root.Position,aim(char,root),charge)),"Visee hors de l'eau : aucun lancer")
    assert(tool.Parent==char and fishing.EquippedRod(char)==tool and valid(token,char),"Canne desequipee avant lancer")
+   ctx.Status("PECHE : canne equipee, attente du controleur natif")
+   assert(await(token,char,4,function()return visible("Tooltip")end),"Controleur de peche pas encore pret (canne equipee)")
+   heartbeat:Wait()
+   assert(tool.Parent==char and valid(token,char),"Canne desequipee avant activation")
    ctx.Status("PECHE : charge Perfect")
    tool:Activate()
-   assert(await(token,char,1,function()return visible("Charge")end),"Charge non confirmee par le jeu")
+   assert(await(token,char,3,function()return visible("Charge")end),"Charge non confirmee apres activation de la canne")
    local target=(flags.PerfectMin:Get()+flags.PerfectMax:Get())/2
    -- Observe the new cast reset; a previous cast can leave Tag at Perfect for one frame.
    assert(await(token,char,flags.ChargeSeconds:Get(),function()local value=F.ReadCharge();return value and value<=target*.5 end),"Nouvelle jauge non confirmee : lancer annule")

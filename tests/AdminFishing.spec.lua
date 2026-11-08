@@ -47,7 +47,9 @@ return function(source)
  local tag={Position={Y={Scale=.26}}}
  assert(math.abs(f.ChargeFromTag(track,tag)-.875)<.00001,"read native gauge with window offsets")
  track.Size.Y.Scale=0;assert(f.ChargeFromTag(track,tag)==nil,"missing gauge cannot trigger release")
+ local beforeEquip=now
  assert(f.Equip(1)==tool and equips==1,"first cast equips rod")
+ assert(now>=beforeEquip+.1,"allow native equip event listeners to bind before activation")
  f.Cancel();assert(deactivations==1 and tool.Parent==bag)
  f.Cancelled=false
  assert(f.Equip(1)==tool and equips==2,"next cast re-equips rod")
