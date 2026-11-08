@@ -42,11 +42,15 @@ return function(ctx)
   local char=player.Character
   return char,char and char:FindFirstChildOfClass("Humanoid"),char and char:FindFirstChild("HumanoidRootPart")
  end
- function F.Cancel()
+ function F.Cancel(keepEquipped)
   F.Cancelled=true
-  local tool=F.Tool;F.Tool=nil
+  local tool=F.Tool;if not keepEquipped then F.Tool=nil end
   local char,humanoid=parts()
-  if tool and tool.Parent==char and humanoid then pcall(function()humanoid:UnequipTools()end)end
+  if not keepEquipped and tool and tool.Parent==char and humanoid then pcall(function()humanoid:UnequipTools()end)end
+  if F.MouseHeld then
+   pcall(function()game:GetService("VirtualInputManager"):SendMouseButtonEvent(F.MouseX,F.MouseY,0,false,game,0)end)
+   F.MouseHeld=false
+  end
   if tool and tool.Parent~=char then pcall(function()tool:Deactivate()end)end
   if F.Camera and world.CurrentCamera==F.Camera and F.CameraFrame and F.Camera.CameraType~=Enum.CameraType.Scriptable then F.Camera.CFrame=F.CameraFrame end
   F.Camera=nil;F.CameraFrame=nil
@@ -169,13 +173,18 @@ return function(ctx)
    heartbeat:Wait()
    assert(tool.Parent==char and valid(token,char),"Canne desequipee avant activation")
    ctx.Status("PECHE : charge Perfect")
-   tool:Activate()
-   assert(await(token,char,3,function()return visible("Charge")end),"Charge non confirmee apres activation de la canne")
+   local mouse=input:GetMouseLocation();F.MouseX,F.MouseY=mouse.X,mouse.Y
+   local sent=pcall(function()game:GetService("VirtualInputManager"):SendMouseButtonEvent(mouse.X,mouse.Y,0,true,game,0)end)
+   F.MouseHeld=sent
+   if not sent then tool:Activate()end
+   assert(await(token,char,3,function()return visible("Charge")end),"Charge non confirmee apres appui maintenu")
    local target=(flags.PerfectMin:Get()+flags.PerfectMax:Get())/2
    -- Observe the new cast reset; a previous cast can leave Tag at Perfect for one frame.
    assert(await(token,char,flags.ChargeSeconds:Get(),function()local value=F.ReadCharge();return value and value<=target*.5 end),"Nouvelle jauge non confirmee : lancer annule")
    assert(await(token,char,flags.ChargeSeconds:Get()*2+1,function()local value=F.ReadCharge();return value and value>=target and fishing.IsPerfect(value)end),"Jauge Perfect non confirmee : lancer annule")
-   tool:Deactivate()
+   if F.MouseHeld then
+    game:GetService("VirtualInputManager"):SendMouseButtonEvent(F.MouseX,F.MouseY,0,false,game,0);F.MouseHeld=false
+   else tool:Deactivate()end
    ctx.Status("PECHE : attente de la touche")
    -- Never click during Waiting: the native controller would cancel the cast.
    local bite=await(token,char,10+fishing.FlightSeconds+flags.BiteMaxSeconds:Get()+2,function()return visible("Reel")end)
@@ -184,7 +193,11 @@ return function(ctx)
    local deadline=os.clock()+flags.ReelTimeoutSeconds:Get()+2
    local interval=1/math.max(1,math.min(12,flags.ReelMaxClicksPerSecond:Get()))
    while visible("Reel")and os.clock()<deadline and valid(token,char)do
-    tool:Activate();tool:Deactivate()
+    local clicked=pcall(function()
+     game:GetService("VirtualInputManager"):SendMouseButtonEvent(F.MouseX,F.MouseY,0,true,game,0)
+     game:GetService("VirtualInputManager"):SendMouseButtonEvent(F.MouseX,F.MouseY,0,false,game,0)
+    end)
+    if not clicked then tool:Activate();tool:Deactivate()end
     if not await(token,char,interval,function()return not visible("Reel")end)and not valid(token,char)then break end
    end
    if visible("Reel")then error("Remontee interrompue ou expiree")end
@@ -193,8 +206,11 @@ return function(ctx)
    end),"Capture non confirmee par le jeu : aucun succes suppose")
    ctx.Status("PECHE : capture confirmee par le jeu")
   end)
-  F.Cancel()
+  -- Keep an idle rod equipped between attempts; only an active cast or a higher-priority
+  -- action requires unequipping it. Never release an in-progress charge on cancellation.
+  F.Cancel(valid(token,char)and not visible("Charge")and not visible("Reel")and not F.MouseHeld)
   if not ok then F.RetryAt=os.clock()+10;ctx.Status("PECHE : "..tostring(why))else F.RetryAt=os.clock()+flags.CastCooldown:Get()end
  end
  return F
 end
+
