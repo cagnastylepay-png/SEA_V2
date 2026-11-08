@@ -1,3 +1,17 @@
+-- Preserve Admin when an executor also auto-loads Hub after a teleport.
+do
+ local options=shared.__AutoSAEReportingOptions
+ if not(type(options)=="table"and options.ClientKind=="admin")then
+  if shared.__SEAAdminBoot or(shared.__SEA_V2Admin and not shared.__SEA_V2Admin.Destroyed)then return shared.__AutoSAEController end
+  local ok,arrival=pcall(function()return game:GetService("TeleportService"):GetTeleportSetting("OvoraRemoteArrival")end)
+  if ok and type(arrival)=="table"and arrival.clientKind=="admin"and arrival.jobId==game.JobId
+   and arrival.reporterUserId==tostring(game:GetService("Players").LocalPlayer.UserId)
+   and type(arrival.expiresAt)=="number"and arrival.expiresAt>=os.time()then
+   local run,why=loadstring(game:HttpGet("https://raw.githubusercontent.com/cagnastylepay-png/SEA_V2/main/Loaders/Admin.lua"),"SEA_V2/Admin")
+   assert(run,why);return run()
+  end
+ end
+end
 print("[Auto_SAE] Build reporting-v4-all-eggs")
 -- Auto_SAE v2.8. SellPrompt selection UI. Verified client contracts; no character/anticheat replacement.
 -- The live game must provide ReplicatedStorage.Client/Data/Shared.
@@ -974,6 +988,13 @@ do
  function report.Revealed()report.MarkDirty();report.MarkSettingsDirty()end
  function report.Start()
   if not report.Enabled then return end
+  if Save and type(Save.Watch)=="function"and not report.SettingsWatchBound then
+   report.SettingsWatchBound=true
+   for _,key in ipairs({"Index","EggInventory","Inventory","EquippedAssets"})do connect(Save.Watch(key),report.MarkSettingsDirty)end
+  end
+  if report.Started or report.Starting then return end
+  report.Starting=true
+  local ready,problem=pcall(function()
   report.Observer=shared.__SEAObserverController
   if not report.Observer or report.Observer.Destroyed then
    local start,why=loadstring(game:HttpGet("https://raw.githubusercontent.com/cagnastylepay-png/SEA_V2/main/Scripts/Observer.lua"),"SEA_V2/Observer")
@@ -981,9 +1002,11 @@ do
   end
   report.Observer.Configure(report.ClientKind,report.SessionId,report.Url,report.Token)
   report.UnsubscribeObserver=report.Observer.Subscribe(report.Receive)
-  if Save and type(Save.Watch)=="function"then
-   for _,key in ipairs({"Index","EggInventory","Inventory","EquippedAssets"})do connect(Save.Watch(key),report.MarkSettingsDirty)end
-  end
+  end)
+  report.Starting=false
+  if not ready then error(problem)end
+  if destroyed then report.Disconnect();return end
+  report.Started=true
   log("SERVER_CHANGE","Arrive sur le serveur %s",game.JobId)
   task.spawn(function()
    while not destroyed and report.Enabled do
@@ -3687,7 +3710,7 @@ function FusionModules.RemoteHop.Try()
    local description=string.format("%s [Poids=%s kg; Revenu=%s/s]",tostring(target.name or target.category or target.uid),(type(target.weightKg)=="number"and formatNumber(target.weightKg)or "inconnu"),formatNumber(target.incomePerSecond))
    setStatus("Teleportation vers "..description)
    log("SERVER_CHANGE","Quitter le serveur %s -> %s pour %s Mode=%s",game.JobId,target.jobId,description,request.Forced and "GO manuel force"or (immediate and "immediat"or "file vide"))
-   pcall(function()game:GetService("TeleportService"):SetTeleportSetting("OvoraRemoteArrival",{jobId=target.jobId,fromJobId=game.JobId,uid=target.uid,name=target.name,weightKg=target.weightKg,incomePerSecond=target.incomePerSecond})end)
+   pcall(function()game:GetService("TeleportService"):SetTeleportSetting("OvoraRemoteArrival",{jobId=target.jobId,fromJobId=game.JobId,uid=target.uid,name=target.name,weightKg=target.weightKg,incomePerSecond=target.incomePerSecond,clientKind=FusionModules.Reporting.ClientKind,reporterUserId=tostring(player.UserId),expiresAt=os.time()+300})end)
    FusionModules.Reporting.FlushLogs()
    local connection
    local resumed=false
@@ -4804,6 +4827,11 @@ end)()
 log("SESSION", "Nouveau lancement %s", os.date("%Y-%m-%d %H:%M:%S"))
 loadSettings()
 if game.JobId~="" then visitedServers[game.JobId]=true end
+if FusionModules.Reporting.Headless then
+ local playerGui=player:FindFirstChildOfClass("PlayerGui")
+ local old=playerGui and playerGui:FindFirstChild("AutoSAEGui")
+ if old then old:Destroy()end
+end
 local gui = FusionModules.Reporting.Headless and Instance.new("Folder") or createInterface()
 if FusionModules.Reporting.ClientKind=="admin" then automaticMode=true;queuePaused=false;stopAfterFlight=false end
 setStatus("Chargement des modules du jeu...")
@@ -4859,6 +4887,11 @@ shared.__AutoSAEController = {Destroy = destroy, Gui = gui, Reporting = FusionMo
 }
 connect(gui.Destroying, destroy)
 connect(script.Destroying, destroy)
+-- Announce arrival before loading the gameplay modules and building inventory state.
+task.spawn(function()
+ local ok,why=pcall(FusionModules.Reporting.Start)
+ if not ok and not destroyed then log("ERROR","Observer startup : %s",tostring(why))end
+end)
 task.spawn(function()
 	while not destroyed do
 		task.wait(2)
