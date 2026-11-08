@@ -308,7 +308,8 @@ return function(ctx)
    if #ids>=64 then break end
    if not pending[uid]and not worn[uid]and not saved.Locked and not saved.IsFavorite and not table.find(p.FusionSlots or{},uid)then
     local item=safe(A.Items.Decode,saved);local rate=item and metric(safe(A.Earnings.RatePerSecond,item))
-    if rate and rate>=options.AutoSellAnimalsMin and rate<=options.AutoSellAnimalsMax then
+    if rate and rate>=options.AutoSellAnimalsMin and rate<=options.AutoSellAnimalsMax
+     and (not options.AutoIndex or (type(p.Index)=="table"and p.Index[item.Category]==true))then
      table.insert(ids,uid);table.insert(names,tostring(item.Category).." ("..uid..", "..tostring(rate).."/s)")
     end
    end
@@ -425,3 +426,4 @@ return function(ctx)
  end)
  return A
 end
+

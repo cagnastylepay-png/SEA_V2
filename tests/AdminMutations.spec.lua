@@ -84,6 +84,10 @@ a.Remotes.PetSatchel={SellSelection={FireServer=function(_,batch)
  assert(locked and#batch.Eggs==0);saleCalls+=1
  for _,uid in ipairs(batch.Assets)do sold[uid]=true;if removeSold then p.Inventory[uid]=nil end end
 end}}
+opts.AutoIndex=true;p.Index={}
+assert(a.SellAnimals()==0 and saleCalls==0,"missing animals protected from automatic sale")
+p.Index=nil;assert(a.SellAnimals()==0 and saleCalls==0,"unavailable index blocks animal sale")
+p.Index={Cat=true}
 assert(a.SellAnimals()==3 and sold.sell and sold.min and sold.max)
 assert(not sold.worn and not sold.locked and not sold.fusion and not sold.favorite and not sold.low and not sold.high)
 assert(a.SellAnimals()==0 and saleCalls==1 and not locked)
@@ -119,4 +123,5 @@ return "Mutations, manual AUTO queue, backpack-only animal sale, image catalog m
 
 
 end
+
 

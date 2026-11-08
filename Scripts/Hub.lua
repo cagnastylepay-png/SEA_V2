@@ -2492,12 +2492,24 @@ local function plotEggCapacity(eggs)
 	return math.max(0, math.floor(limit)-count), count
 end
 
+-- Index state is read again for every candidate and before each request.
+function FusionModules.Helpers.MissingFromIndex(egg)
+ if not FusionModules.Options.AutoIndex then return false end
+ local ok,profile=pcall(Save.Peek)
+ local category=egg and egg.AssetCategory
+ if not ok or type(profile)~="table"or type(profile.Index)~="table"or type(category)~="string"then return nil end
+ return profile.Index[category]~=true
+end
+function FusionModules.Helpers.CanPlaceInventoryEgg(egg)
+ return FusionModules.Helpers.MissingFromIndex(egg)==true or FusionModules.Helpers.InIncomeRange("AutoPlace",getRatePerSecond(egg))
+end
+
 function FusionModules.Helpers.inventoryPlacementOrder(eggs, selection)
 	local ids = {}
 	for uid, egg in pairs(eggs) do
 		local rate=getRatePerSecond(egg)
-		if not egg.InventoryPlaced and egg.Placement == nil and type(rate)=="number" and rate==rate
-			and FusionModules.Helpers.InIncomeRange("AutoPlace",rate) and (not selection or selection[uid]) then
+		if not egg.InventoryPlaced and egg.Placement == nil
+			and FusionModules.Helpers.CanPlaceInventoryEgg(egg) and (not selection or selection[uid]) then
 			table.insert(ids, uid)
 		end
 	end
@@ -2606,8 +2618,8 @@ local function placeInventoryEggsImpl(selection, token, opened)
 			if not free or free<=0 then summary="Enclos plein"; break end
 			local egg=eggs[uid]
 			local rate=egg and getRatePerSecond(egg)
-			if egg and not egg.InventoryPlaced and egg.Placement==nil and type(rate)=="number"
-				and FusionModules.Helpers.InIncomeRange("AutoPlace",rate) then
+			if egg and not egg.InventoryPlaced and egg.Placement==nil
+				and FusionModules.Helpers.CanPlaceInventoryEgg(egg) then
 				local localFrame, point=findPlotEggSpot(plot,eggs,reserved)
 				if not localFrame then summary="Aucun emplacement libre detecte"; break end
 				local request={done=false}
@@ -2618,7 +2630,7 @@ local function placeInventoryEggsImpl(selection, token, opened)
 						if equipped~=true then return false,why end
 						if not valid() then return false,"Placement annule" end
                         local latest=EggState.ReadOwnedEgg(player.UserId,uid)
-                        if not latest or latest.Placement~=nil or not FusionModules.Helpers.InIncomeRange("AutoPlace",getRatePerSecond(latest))then
+                        if not latest or latest.Placement~=nil or not FusionModules.Helpers.CanPlaceInventoryEgg(latest)then
                          return false,"Oeuf hors plage ou indisponible"
                         end
 						return EggState.PlantEgg(uid,localFrame)
@@ -2673,6 +2685,7 @@ function FusionModules.Helpers.inventoryEggsBelowMinimum(eggs)
 	for uid,egg in pairs(eggs) do
 		local rate=getRatePerSecond(egg)
 		if not egg.InventoryPlaced and egg.Placement==nil and type(rate)=="number"
+			and FusionModules.Helpers.MissingFromIndex(egg)==false
 			and rate==rate and rate>=FusionModules.Options.AutoSellMin and rate<=FusionModules.Options.AutoSellMax then
 			table.insert(ids,uid)
 		end
@@ -5057,5 +5070,6 @@ task.spawn(function()
 		log("ERROR", "%s", tostring(failure))
 	end
 end)
+
 
 
