@@ -391,7 +391,21 @@ return function(ctx)
    send(result);pcall(A.Publish,true)
   end)
  end
- function A.Destroy()A.Destroyed=true;releaseMutationTool();for _,c in ipairs(A.Connections or{})do c:Disconnect()end;ctx.Report.AdminReceive=nil end
+ function A.CancelFishing()if A.Fishing then A.Fishing.Cancel()end end
+ function A.Fish(token)
+  if A.Destroyed or not A.Initialized then return end
+  if A.FishingRetryAt and os.clock()<A.FishingRetryAt then task.wait(.25);return end
+  local ok,why=pcall(function()
+  if not A.Fishing then
+   local chunk,why=loadstring(game:HttpGet("https://raw.githubusercontent.com/cagnastylepay-png/SEA_V2/main/Scripts/AdminFishing.lua"),"SEA_V2/AdminFishing")
+   if not chunk then ctx.Status("PECHE : "..tostring(why));return end
+   A.Fishing=chunk()(ctx)
+  end
+  A.Fishing.Cycle(token)
+  end)
+  if not ok then A.CancelFishing();A.FishingRetryAt=os.clock()+10;ctx.Status("PECHE : "..tostring(why))end
+ end
+ function A.Destroy()A.Destroyed=true;A.CancelFishing();releaseMutationTool();for _,c in ipairs(A.Connections or{})do c:Disconnect()end;ctx.Report.AdminReceive=nil end
  ctx.Report.AdminReceive=A.Receive
  task.spawn(function()
   while not A.Destroyed and not ctx.Ready()do task.wait(.5)end

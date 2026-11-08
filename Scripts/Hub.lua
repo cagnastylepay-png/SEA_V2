@@ -87,7 +87,7 @@ local placementRequest
 local FusionModules = {}
 FusionModules.Helpers = {}
 FusionModules.Options={AutoEggs=true,AutoEggsMin=2e9,AutoEggsMax=999e9,
- AutoTreadmill=true,AutoSell=true,AutoSellMin=0,AutoSellMax=2e9,
+ AutoTreadmill=true,AutoFishing=false,AutoSell=true,AutoSellMin=0,AutoSellMax=2e9,
  AutoFuse=true,AutoFuseMin=0,AutoFuseMax=1e33,AutoOpen=true,AutoOpenMin=0,AutoOpenMax=20e9,AutoPlace=true,AutoPlaceMin=2e9,AutoPlaceMax=1e33,AutoPapillon=true,AutoIndex=true,QueueNearest=false,TeleportInstantMin=50e9}
 
 function FusionModules.Helpers.InIncomeRange(key,rate)
@@ -116,6 +116,8 @@ function FusionModules.Helpers.SetOption(key,value)
   if key:match("Min$")and type(FusionModules.Options[prefix.."Max"])=="number"and value>FusionModules.Options[prefix.."Max"]then return false,"Minimum superieur au maximum"end
   if key:match("Max$")and type(FusionModules.Options[prefix.."Min"])=="number"and value<FusionModules.Options[prefix.."Min"]then return false,"Maximum inferieur au minimum"end
  end
+ if key=="AutoFishing"and value then FusionModules.Options.AutoTreadmill=false end
+ if key=="AutoTreadmill"and value then FusionModules.Options.AutoFishing=false end
  FusionModules.Options[key]=value
  minimumRatePerSecond=FusionModules.Options.AutoEggsMin
  autoIncludeMissingIndex=FusionModules.Options.AutoIndex
@@ -135,7 +137,7 @@ function FusionModules.Helpers.RestoreOptions(saved)
   end
  end
  if candidate.AutoEggsMin>candidate.AutoEggsMax or candidate.AutoSellMin>candidate.AutoSellMax or candidate.AutoOpenMin>candidate.AutoOpenMax or candidate.AutoPlaceMin>candidate.AutoPlaceMax or candidate.AutoFuseMin>candidate.AutoFuseMax then return false end
- if candidate.AutoSellAnimalsMin>candidate.AutoSellAnimalsMax then return false end
+ if candidate.AutoSellAnimalsMin>candidate.AutoSellAnimalsMax or(candidate.AutoTreadmill and candidate.AutoFishing)then return false end
  for _,id in ipairs({"Boss","Scrambled","Enchanted","Nitro","Spectral","Musical","Alien","DarkMatter"})do local n=candidate["Mutation"..id.."Attempts"];if n%1~=0 or n<1 or n>100 then return false end end
  FusionModules.Options=candidate
  minimumRatePerSecond=candidate.AutoEggsMin;autoIncludeMissingIndex=candidate.AutoIndex;automaticMode=true
@@ -326,7 +328,7 @@ local function loadSettings()
 		minimumRatePerSecond = minimum * 1e9
 	end
  for key,value in pairs(FusionModules.Options)do
-  if type(value)=="boolean"and key~="AutoMutations"and key~="AutoSellAnimals"and not key:match("^Mutation")then FusionModules.Options[key]=automaticMode end
+  if type(value)=="boolean"and key~="AutoMutations"and key~="AutoSellAnimals"and key~="AutoFishing"and not key:match("^Mutation")then FusionModules.Options[key]=automaticMode end
  end
  FusionModules.Options.AutoEggsMin=minimumRatePerSecond
  FusionModules.Options.AutoSellMax=minimumRatePerSecond
@@ -2227,6 +2229,7 @@ stopAutomation = function(reason, pause)
 	if automaticMode then stopAfterFlight = false end
 	FusionModules.QueueResumeAt = os.clock() + 3
 	autoEnabled = false
+    if FusionModules.AdminRuntime and FusionModules.AdminRuntime.CancelFishing then FusionModules.AdminRuntime.CancelFishing()end
     if FusionModules.Reporting then FusionModules.Reporting.MarkSettingsDirty()end
 	generation += 1
 	if currentCycle then cleanupCycle(currentCycle) end
@@ -2249,6 +2252,7 @@ local function moveActivity(destination, token, interruptForEgg, nextDestination
 	local previous = root.Position
 	local nextCommand = 0
 	while true do
+  if autoActivity=="TO_FISHING"and not FusionModules.Options.AutoFishing then stopMovement(true);return false,"peche OFF"end
   if autoActivity=="TO_TREADMILL"and not FusionModules.Options.AutoTreadmill then stopMovement(true);return false,"tapis OFF"end
 		if not activityValid(token, character) or humanoid.Health <= 0 then
 			stopMovement()
@@ -3135,6 +3139,12 @@ do
 end
 
 local function idleOnTreadmill(token)
+ if FusionModules.Reporting.ClientKind=="admin"and FusionModules.Options.AutoFishing then
+  if treadmillAssigned then leaveTreadmill(token)end
+  local runtime=FusionModules.AdminRuntime
+  if runtime and runtime.Fish then autoActivity="FISHING";runtime.Fish(token)else setStatus("PECHE : initialisation Admin");task.wait(.25)end
+  return true
+ end
  if not FusionModules.Options.AutoTreadmill then
   if treadmillAssigned then leaveTreadmill(token)end
   autoActivity="IDLE";setStatus("En attente : AutoTreadmill OFF");task.wait(CONFIG.ScanInterval);return true
@@ -3310,7 +3320,7 @@ local function worker(token)
 			end
 		else
 			directNext = false
-			if automaticMode and FusionModules.Butterflies.Available() then
+			if automaticMode and not(FusionModules.Reporting.ClientKind=="admin"and FusionModules.Options.AutoFishing)and FusionModules.Butterflies.Available() then
 				FusionModules.Butterflies.Idle(token)
 			elseif automaticMode then
 				serverSearchState = "OFF"
@@ -5003,6 +5013,13 @@ shared.__AutoSAEController = {Destroy = destroy, Gui = gui, Reporting = FusionMo
    return tostring(lastStatusText or autoActivity or"En attente").." · "..reason..(FusionModules.InventoryNotice and" · "..FusionModules.InventoryNotice or"")
   end,
   MutationLock=function(value)FusionModules.MutationBusy=value==true end,
+  Status=function(text)setStatus(text)end,
+  FishingMove=function(destination,token)autoActivity="TO_FISHING";local ok=moveActivity(destination,token,true);autoActivity="FISHING";return ok end,
+  CanFish=function(token)
+   if destroyed or not ready or not autoEnabled or generation~=token or not automaticMode or queuePaused or not FusionModules.Options.AutoFishing or currentCycle or serverHopPending or inventoryPlacementBusy or placementRequest or hatchInProgress or FusionModules.Pending()then return false end
+   if FusionModules.AdminRuntime and FusionModules.AdminRuntime.ManualPending then return false end
+   syncQueue();local carry=readCarry();return next(queuedEggs)==nil and not FusionModules.Arrival.Waiting()and carry and not carry.IsCarrying
+  end,
   CanMutate=function()return not destroyed and ready and automaticMode and autoEnabled and not queuePaused and not currentCycle and not serverHopPending and not FusionModules.Pending() and not inventoryPlacementBusy and not placementRequest and not hatchInProgress end,
   Busy=function()return destroyed or autoEnabled or currentCycle~=nil or inventoryPlacementBusy or placementRequest~=nil or hatchInProgress or FusionModules.Pending() or serverHopPending end,
   Countdown=FusionModules.Helpers.PlotEggCountdown, FindSpot=findPlotEggSpot, AcknowledgeReward=FusionModules.AcknowledgeReward,
