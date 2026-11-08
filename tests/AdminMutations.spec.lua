@@ -52,7 +52,50 @@ assert(a.Execute({action="egg.mutate",uid="e",mutationId="Boss"})==true and atte
 ctx.MutationLock(false)
 assert(tool.Parent==nil,"consumable released")
 assert(not pcall(a.Execute,{action="egg.mutate",uid="e",mutationId="Boss"}),"already applied manual refused")
-return "AutoMutations + manual mocks passed: strict threshold, 2-try cap, reload persistence, success stop, unknown-result block, AUTO off, exclusive lock. No real consumables used."
+local resumeCount,beginCount,equips=0,0,0
+local queue={}
+env.task.spawn=function(fn)table.insert(queue,fn)end
+stored=nil;egg.Mutations={};a=boot()
+ctx.Report.SettingsAllowed=true
+local held=false
+ctx.BeginManual=function()beginCount+=1;if beginCount<3 then return false end;held=true;return true end
+ctx.ManualCanContinue=function()return held end
+ctx.EndManual=function()held=false;resumeCount+=1 end
+a.Remotes.Haul={WearBest={InvokeServer=function()assert(held);equips+=1;return true end}}
+a.Receive({version=1,requestId="manual-auto",action="equip.best"})
+assert(a.Busy)
+queue[#queue]()
+assert(equips==1 and beginCount==3 and resumeCount==1 and not held and not a.Busy)
+assert(a.Seen["manual-auto"].status=="confirmed")
+a.Receive({version=1,requestId="manual-auto",action="equip.best"})
+assert(equips==1,"no duplicate manual action")
+ctx.BeginManual=function()return false end
+a.Receive({version=1,requestId="priority",action="equip.best"});queue[#queue]()
+assert(equips==1 and a.Seen.priority.status=="rejected" and not a.Busy,"priority waits are bounded and do not execute")
+
+
+ctx.CanMutate=function()return true end
+opts.AutoSellAnimals=true;opts.AutoSellAnimalsMin=10;opts.AutoSellAnimalsMax=20
+p.Inventory={sell={Category="Cat",rate=15},min={Category="Cat",rate=10},max={Category="Cat",rate=20},low={Category="Cat",rate=9},high={Category="Cat",rate=21},worn={Category="Cat",rate=15},locked={Category="Cat",rate=15,Locked=true},fusion={Category="Cat",rate=15},favorite={Category="Cat",rate=15,IsFavorite=true}}
+p.EquippedAssets={"worn"};p.FusionSlots={"fusion"}
+a.Roster={ReadOwnerPen=function()return{}end};a.Items={Decode=function(r)return r end}
+local sold={};local saleCalls=0;local removeSold=true
+a.Remotes.PetSatchel={SellSelection={FireServer=function(_,batch)
+ assert(locked and#batch.Eggs==0);saleCalls+=1
+ for _,uid in ipairs(batch.Assets)do sold[uid]=true;if removeSold then p.Inventory[uid]=nil end end
+end}}
+assert(a.SellAnimals()==3 and sold.sell and sold.min and sold.max)
+assert(not sold.worn and not sold.locked and not sold.fusion and not sold.favorite and not sold.low and not sold.high)
+assert(a.SellAnimals()==0 and saleCalls==1 and not locked)
+p.Inventory.uncertain={Category="Cat",rate=15};removeSold=false
+assert(a.SellAnimals()==1 and saleCalls==2);assert(a.SellAnimals()==0 and saleCalls==2,"no retry for unknown animal sale")
+opts.AutoSellAnimals=false;p.Inventory.new={Category="Cat",rate=15};assert(a.SellAnimals()==0)
+a.Assets={Directory={Viridian={DisplayName="Viridian Prowler",Icon="rbxassetid://98765432101235",Egg={Icon="rbxassetid://98765432101234"}},Placeholder={DisplayName="No image",Icon="rbxassetid://0",Egg={Icon="invalid"}}}}
+assert(a.Execute({action="images.collect"}));assert(#a.ImageCatalog==1)
+assert(a.ImageCatalog[1].name=="Viridian Prowler"and a.ImageCatalog[1].animalImageAssetId=="98765432101235"and a.ImageCatalog[1].eggImageAssetId=="98765432101234")
+
+return "Mutations, manual AUTO queue, backpack-only animal sale, image catalog mocks passed: strict threshold, 2-try cap, reload persistence, success stop, unknown-result block, AUTO off, exclusive lock. No real consumables used."
+
 
 end
 

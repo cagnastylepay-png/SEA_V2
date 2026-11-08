@@ -95,6 +95,9 @@ function FusionModules.Helpers.InIncomeRange(key,rate)
 end
 
 FusionModules.Options.AutoMutations=false
+FusionModules.Options.AutoSellAnimals=false
+FusionModules.Options.AutoSellAnimalsMin=0
+FusionModules.Options.AutoSellAnimalsMax=2e9
 for _,id in ipairs({"Boss","Scrambled","Enchanted","Nitro","Spectral"})do
  FusionModules.Options["Mutation"..id.."Enabled"]=false
  FusionModules.Options["Mutation"..id.."Min"]=0
@@ -131,6 +134,7 @@ function FusionModules.Helpers.RestoreOptions(saved)
   end
  end
  if candidate.AutoEggsMin>candidate.AutoEggsMax or candidate.AutoSellMin>candidate.AutoSellMax or candidate.AutoOpenMin>candidate.AutoOpenMax or candidate.AutoPlaceMin>candidate.AutoPlaceMax or candidate.AutoFuseMin>candidate.AutoFuseMax then return false end
+ if candidate.AutoSellAnimalsMin>candidate.AutoSellAnimalsMax then return false end
  for _,id in ipairs({"Boss","Scrambled","Enchanted","Nitro","Spectral"})do local n=candidate["Mutation"..id.."Attempts"];if n%1~=0 or n<1 or n>100 then return false end end
  FusionModules.Options=candidate
  minimumRatePerSecond=candidate.AutoEggsMin;autoIncludeMissingIndex=candidate.AutoIndex;automaticMode=true
@@ -140,7 +144,7 @@ end
 FusionModules.Busy = false
 FusionModules.Request = shared.__AutoSAEFusionRequest
 function FusionModules.Pending()
-	return FusionModules.MutationBusy or FusionModules.Busy or (FusionModules.Request and not FusionModules.Request.done)
+	return FusionModules.ManualBusy or FusionModules.MutationBusy or FusionModules.Busy or (FusionModules.Request and not FusionModules.Request.done)
 end
 local EggSaleRemote
 local GameplayBalance
@@ -321,7 +325,7 @@ local function loadSettings()
 		minimumRatePerSecond = minimum * 1e9
 	end
  for key,value in pairs(FusionModules.Options)do
-  if type(value)=="boolean"and key~="AutoMutations"and not key:match("^Mutation")then FusionModules.Options[key]=automaticMode end
+  if type(value)=="boolean"and key~="AutoMutations"and key~="AutoSellAnimals"and not key:match("^Mutation")then FusionModules.Options[key]=automaticMode end
  end
  FusionModules.Options.AutoEggsMin=minimumRatePerSecond
  FusionModules.Options.AutoSellMax=minimumRatePerSecond
@@ -2314,7 +2318,7 @@ local function hatchReadyEggsOnWallClose(token)
 	local opened = 0
 	for uid, record in pairs(eggs) do
 		if type(uid) == "string" and type(record) == "table" and record.Placement ~= nil then
-			local valid, grown = pcall(EggGrowthPolicy.IsReady, record, 0)
+			local valid, _, grown = pcall(FusionModules.Helpers.PlotEggCountdown, record)
 			local rate = getRatePerSecond(record)
 			if valid and grown and rate and rate >= FusionModules.Options.AutoOpenMin and rate <= FusionModules.Options.AutoOpenMax then table.insert(readyUids, uid) end
 		end
@@ -2325,12 +2329,17 @@ local function hatchReadyEggsOnWallClose(token)
 		local readOK, latest = pcall(EggState.ReadOwnedEgg, player.UserId, uid)
 		local readyOK, grown = false, false
 		if readOK and type(latest) == "table" and latest.Placement ~= nil then
-			readyOK, grown = pcall(EggGrowthPolicy.IsReady, latest, 0)
+			local seconds;readyOK, seconds, grown = pcall(FusionModules.Helpers.PlotEggCountdown, latest)
 		end
 		local rate = readOK and type(latest) == "table" and getRatePerSecond(latest)
-		if readyOK and grown and rate and rate >= FusionModules.Options.AutoOpenMin and rate <= FusionModules.Options.AutoOpenMax then
+  local holdForMutation=false
+  if FusionModules.Reporting.ClientKind=="admin"and FusionModules.Options.AutoMutations then
+   local runtime=FusionModules.AdminRuntime
+   holdForMutation=not runtime or not runtime.Initialized or runtime.ShouldHoldEgg(uid)
+  end
+		if not holdForMutation and readyOK and grown and rate and rate >= FusionModules.Options.AutoOpenMin and rate <= FusionModules.Options.AutoOpenMax then
 			hatchInProgress = true
-			setStatus("Mur ferme : ouverture des oeufs prets...")
+			setStatus("Ouverture des oeufs prets...")
 			local activated, accepted, reason = pcall(PlacedEggRenderer.ActivateLocalEgg, uid)
 			hatchInProgress = false
 			if activated and accepted == true then opened += 1 end
@@ -2477,8 +2486,8 @@ local function findPlotEggSpot(plot, eggs, reserved)
 	local halfX, halfZ = area.Size.X*0.5-2, area.Size.Z*0.5-2
 	if halfX < 0 or halfZ < 0 then return nil end
 	local points = {}
-	for x=-halfX,halfX,4 do
-		for z=-halfZ,halfZ,4 do
+	for x=-halfX,halfX,2 do
+		for z=-halfZ,halfZ,2 do
 			local point = area.CFrame:PointToWorldSpace(Vector3.new(x, area.Size.Y*0.5, z))
 			local clear = true
 			for _, other in ipairs(occupied) do
@@ -2491,11 +2500,13 @@ local function findPlotEggSpot(plot, eggs, reserved)
 	table.sort(points,function(a,b)
 		return root and distanceXZ(a,root.Position)<distanceXZ(b,root.Position) or (not root and a.X<b.X)
 	end)
-	for _, point in ipairs(points) do
-		local hit = Workspace:Raycast(point+area.CFrame.UpVector*256, -area.CFrame.UpVector*512,params)
-		if hit and hit.Instance == area then
-			return plot.CenterPoint.CFrame:ToObjectSpace(CFrame.new(hit.Position)), hit.Position
-		end
+	for index, point in ipairs(points) do
+  -- Several real ray directions avoid rejecting the whole floor because large egg art covers a top-down ray.
+  for _,offset in ipairs({area.CFrame.UpVector*8,area.CFrame.UpVector*8+area.CFrame.RightVector*12,area.CFrame.UpVector*8-area.CFrame.RightVector*12,area.CFrame.UpVector*8+area.CFrame.LookVector*12,area.CFrame.UpVector*8-area.CFrame.LookVector*12})do
+   local hit=Workspace:Raycast(point+offset,-offset*1.02,params)
+   if hit and hit.Instance==area then return plot.CenterPoint.CFrame:ToObjectSpace(CFrame.new(hit.Position)),hit.Position end
+  end
+  if index%64==0 then task.wait();if destroyed then return nil end end
 	end
 	return nil
 end
@@ -2629,6 +2640,8 @@ function FusionModules.Helpers.inventoryEggsBelowMinimum(eggs)
 	return ids
 end
 
+FusionModules.SalesPending=shared.__SEAInventorySalesPending or{}
+shared.__SEAInventorySalesPending=FusionModules.SalesPending
 local function sellInventoryEggsBelowMinimum(token)
  if not FusionModules.Options.AutoSell then return end
 	if FusionModules.Pending() or not EggSaleRemote or inventoryPlacementBusy or placementRequest or currentCycle
@@ -2637,6 +2650,9 @@ local function sellInventoryEggsBelowMinimum(token)
 	local _,_,root=getCharacterParts()
 	if not root or isSafe(root.Position)~=true then return end
 	local ids=FusionModules.Helpers.inventoryEggsBelowMinimum(inventoryEggRecords())
+ local currentEggs=inventoryEggRecords()
+ for uid in pairs(FusionModules.SalesPending)do if not currentEggs[uid]then FusionModules.SalesPending[uid]=nil end end
+ for index=#ids,1,-1 do if FusionModules.SalesPending[ids[index]]then table.remove(ids,index)end end
 	if #ids==0 then return end
 	inventoryPlacementBusy=true -- Serialize all inventory actions with placement.
 	local ok,failure=pcall(function()
@@ -2651,8 +2667,19 @@ local function sellInventoryEggsBelowMinimum(token)
 			if #batch>0 then
 				local saleNames={}
                 local snapshot=inventoryEggRecords()
-                for _,uid in ipairs(batch)do table.insert(saleNames,FusionModules.Helpers.DescribeEgg(snapshot[uid]or{}).." ("..uid..")")end
+                for _,uid in ipairs(batch)do
+                 table.insert(saleNames,FusionModules.Helpers.DescribeEgg(snapshot[uid]or{}).." ("..uid..")")
+                 FusionModules.SalesPending[uid]=true
+                end
+                FusionModules.InventoryNotice="Vente envoyee : "..table.concat(saleNames," | ")
                 EggSaleRemote:FireServer({Assets={},Eggs=batch})
+                local deadline=os.clock()+3;local removed=false
+                repeat
+                 removed=true;local latest=inventoryEggRecords()
+                 for _,uid in ipairs(batch)do if latest[uid]then removed=false end end
+                 if removed or destroyed or os.clock()>=deadline then break end;task.wait(.1)
+                until false
+                FusionModules.InventoryNotice=(removed and"Vente confirmee (inventaire) : "or"Vente en attente, aucun renvoi : ")..table.concat(saleNames," | ")
                 for _,description in ipairs(saleNames)do log("INVENTORY_SELL_REQUEST","Vente envoyee : %s",description)end
 				log("INVENTORY_SELL_REQUEST","Oeufs=%d Plage=%s/s - %s/s | confirmation via inventaire",#batch,formatNumber(FusionModules.Options.AutoSellMin),formatNumber(FusionModules.Options.AutoSellMax))
 			end
@@ -2907,27 +2934,27 @@ function FusionModules.AcknowledgeReward(reward)
 end
 
 
-FusionModules.EquipBestCycle={Busy=false}
-function FusionModules.Helpers.EquipBestForCycle()
- local state=FusionModules.EquipBestCycle
- if state.Busy or not HaulRemotes or not AreaEggCycle or not ServerClock then return false end
- local clockOK,cycle=pcall(function()return AreaEggCycle.ActivePeriodIndexAt(ServerClock.Now())end)
- if not clockOK or type(cycle)~="number"or cycle~=cycle or math.abs(cycle)==math.huge then return false end
- if state.Attempted==cycle then return state.Succeeded==cycle end
- -- Reserve before yielding to the server so concurrent maintenance cannot duplicate it.
- state.Attempted=cycle;state.Busy=true
- setStatus("Cycle d'oeufs : Equip Best...")
+FusionModules.EquipBestState={Busy=false,RetryAt=0}
+function FusionModules.Helpers.EquipBestForInventory()
+ local state=FusionModules.EquipBestState
+ if state.Busy or not HaulRemotes or not Save or os.clock()<state.RetryAt then return false end
+ local okProfile,profile=pcall(Save.Peek);if not okProfile or type(profile)~="table"then return false end
+ local entries={};for uid,item in pairs(profile.Inventory or{})do table.insert(entries,tostring(uid)..":"..HttpService:JSONEncode(item))end;table.sort(entries)
+ local signature=table.concat(entries,"|");if signature==state.Succeeded then return true end
+ state.RetryAt=os.clock()+10;state.Busy=true
+ setStatus("Inventaire modifie : Equip Best...")
  local ok,accepted,reason=pcall(function()return HaulRemotes.WearBest:InvokeServer()end)
  state.Busy=false
- if ok and accepted==true then state.Succeeded=cycle end
- log("WALL_EQUIP_BEST","Cycle=%s Accepte=%s Raison=%s",tostring(cycle),tostring(ok and accepted==true),tostring(ok and reason or accepted))
+ if ok and accepted==true then state.Succeeded=signature end
+ log("WALL_EQUIP_BEST","Accepte=%s Raison=%s",tostring(ok and accepted==true),tostring(ok and reason or accepted))
  return ok and accepted==true
 end
 
 local function serviceWallMaintenance(token)
 	if destroyed or not automaticMode or not autoEnabled or generation ~= token or currentCycle or FusionModules.Pending() or inventoryPlacementBusy or placementRequest then return end
+ if FusionModules.AdminRuntime and FusionModules.AdminRuntime.ManualPending then return end
     if FusionModules.YieldToSpawnedEggs() then return end
-	if not wallMaintenancePending and os.clock()-lastMaintenanceAt < 15 then return end
+	if not wallMaintenancePending and os.clock()-lastMaintenanceAt < 2 then return end
 	local _, _, root = getCharacterParts()
 	if not root or isSafe(root.Position) ~= true then return end
 	wallMaintenancePending = false
@@ -2939,15 +2966,18 @@ local function serviceWallMaintenance(token)
 	 if not FusionModules.AdminRuntime or not FusionModules.AdminRuntime.Initialized then return end
 	 local ok,pending=pcall(FusionModules.AdminRuntime.MutateNext)
 	 if not ok then warn("[SEA Admin] AutoMutations : "..tostring(pending));return end
-	 if pending then wallMaintenancePending=true;return end
+	 -- A mutation retry must not starve sales/fusion or unrelated ready eggs.
 	end
 	local opened = hatchReadyEggsOnWallClose(token)
 	if destroyed or not autoEnabled or generation ~= token or queuePaused or FusionModules.YieldToSpawnedEggs() then return end
 	sellInventoryEggsBelowMinimum(token)
 	if destroyed or not autoEnabled or generation~=token or queuePaused or FusionModules.YieldToSpawnedEggs() then return end
+ if FusionModules.Reporting.ClientKind=="admin"and FusionModules.AdminRuntime and FusionModules.AdminRuntime.Initialized then FusionModules.AdminRuntime.SellAnimals()end
+ if destroyed or not autoEnabled or generation~=token or queuePaused or FusionModules.YieldToSpawnedEggs()then return end
 	placeInventoryEggs(nil,token,opened)
 	if destroyed or not autoEnabled or generation ~= token or queuePaused or placementRequest or FusionModules.YieldToSpawnedEggs() then return end
-	if FusionModules.Helpers.EquipBestForCycle() and FusionModules.Ready
+ FusionModules.Helpers.EquipBestForInventory()
+	if FusionModules.Ready
         and not destroyed and autoEnabled and generation==token and not queuePaused
         and not FusionModules.YieldToSpawnedEggs() then
         local fusionOK=FusionModules.Protect("FUSION_ACTION",FusionModules.Run,token)
@@ -3454,6 +3484,7 @@ local function initialize()
 		-- Final success is still checked against ReadOwnedEgg(localUserId, exactUid).
 	end)
 	connect(EggState.OwnerRefreshed, function(userId)
+  if userId==player.UserId then wallMaintenancePending=true end
 		if userId == player.UserId and currentCycle then
 			log("OWNER_REFRESHED", "UID=%s Possession=%s", currentCycle.uid, tostring(ownsEgg(currentCycle.uid)))
 		end
@@ -3480,11 +3511,15 @@ inventoryEggRecords = function()
 			local decoded, record = pcall(EggRecords.Decode, saved)
 			if decoded and type(record) == "table" then
 				record.Uid, record.InventoryOwned = uid, true
-				record.InventoryPlaced = saved.Placement ~= nil
+				record.InventoryPlaced = record.Placement ~= nil
 				result[uid] = record
 			end
 		end
 	end
+ local ownerOK,live=pcall(EggState.ReadOwnerEggs,player.UserId)
+ if ownerOK and type(live)=="table"then for uid,record in pairs(live)do
+  if type(uid)=="string"and type(record)=="table"then local copy=table.clone(record);copy.Uid=uid;copy.InventoryOwned=true;copy.InventoryPlaced=copy.Placement~=nil;result[uid]=copy end
+ end end
 	return result
 end
 
@@ -3692,7 +3727,7 @@ end
 function FusionModules.RemoteHop.Try()
  local hop=FusionModules.RemoteHop
  if hop.Processing or serverHopPending or not hop.Pending or os.clock()<hop.RetryAt then return false end
- if FusionModules.MutationBusy then return false end
+ if FusionModules.MutationBusy or FusionModules.ManualBusy then return false end
  local request=hop.Pending
  if os.clock()>=request.Deadline or not hop.Validate(request.Target,request.Forced)then
   hop.Note("invalid:"..tostring(request.Id),os.clock()>=request.Deadline and "Cible expiree avant le depart"or "Conditions locales non remplies avant le depart",request.Target)
@@ -4888,12 +4923,27 @@ shared.__AutoSAEController = {Destroy = destroy, Gui = gui, Reporting = FusionMo
   SetRuntime=function(runtime)FusionModules.AdminRuntime=runtime end,
   Ready=function()return ready and not destroyed end,
   GetOptions=function()return table.clone(FusionModules.Options)end,
+  InventoryNotice=function(text)FusionModules.InventoryNotice=tostring(text):sub(1,500)end,
+  BeginManual=function()
+   if destroyed or not ready or serverHopPending or currentCycle or inventoryPlacementBusy or placementRequest or hatchInProgress or FusionModules.Pending() or(inFlightRequest and not inFlightRequest.done)then return false end
+   syncQueue();if automaticMode and selectBest()then return false end
+   local carry=readCarry();if not carry or carry.IsCarrying then return false end
+   FusionModules.ManualBusy=true;stopAutomation("Action manuelle Render en cours",false);RunService.Heartbeat:Wait()
+   local ok,why=leaveTreadmill(generation);if not ok then FusionModules.ManualBusy=false;error("Sortie tapis : "..tostring(why))end
+   return true
+  end,
+  ManualCanContinue=function()
+   if not FusionModules.ManualBusy or destroyed or serverHopPending or currentCycle then return false end
+   syncQueue();return not(automaticMode and selectBest())
+  end,
+  EndManual=function()FusionModules.ManualBusy=false;wallMaintenancePending=true;if not destroyed and automaticMode then FusionModules.QueueResumeAt=0;wakeQueue()end end,
   GetStatus=function()
    local reason=FusionModules.PlacementStatus or"Placement en attente de maintenance"
    if not FusionModules.Options.AutoPlace then reason="Placement automatique OFF"
    elseif currentCycle or next(queuedEggs)then reason="Placement en attente : collecte des oeufs prioritaire"
    elseif placementRequest then reason="Placement en attente de confirmation serveur"end
-   return tostring(lastStatusText or autoActivity or"En attente").." · "..reason
+   if FusionModules.AdminRuntime and FusionModules.AdminRuntime.ManualPending then reason="Action manuelle en attente : priorite au vol"end
+   return tostring(lastStatusText or autoActivity or"En attente").." · "..reason..(FusionModules.InventoryNotice and" · "..FusionModules.InventoryNotice or"")
   end,
   MutationLock=function(value)FusionModules.MutationBusy=value==true end,
   CanMutate=function()return not destroyed and ready and automaticMode and autoEnabled and not queuePaused and not currentCycle and not serverHopPending and not FusionModules.Pending() and not inventoryPlacementBusy and not placementRequest and not hatchInProgress end,

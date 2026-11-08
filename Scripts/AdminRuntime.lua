@@ -18,9 +18,9 @@ return function(ctx)
   if A.Destroyed or not ctx.Report.Ready or not ctx.Report.Socket then return false end
   local ok=pcall(function()
    if m.type=="admin.inventory.snapshot"then
-    local header=table.clone(m);header.eggs=nil;header.animals=nil;header.mutationConsumables=nil
+    local header=table.clone(m);header.eggs=nil;header.animals=nil;header.mutationConsumables=nil;header.imageCatalog=nil
     local function array(rows)local out={};for _,r in ipairs(rows)do table.insert(out,Http:JSONEncode(r))end;return"["..table.concat(out,",").."]"end
-    ctx.Report.Socket:Send(Http:JSONEncode(header):sub(1,-2)..',"eggs":'..array(m.eggs)..',"animals":'..array(m.animals)..',"mutationConsumables":'..array(m.mutationConsumables or{})..'}')
+    ctx.Report.Socket:Send(Http:JSONEncode(header):sub(1,-2)..',"eggs":'..array(m.eggs)..',"animals":'..array(m.animals)..',"mutationConsumables":'..array(m.mutationConsumables or{})..',"imageCatalog":'..array(m.imageCatalog or{})..'}')
    else ctx.Report.Socket:Send(Http:JSONEncode(m))end
   end)
   return ok
@@ -99,7 +99,7 @@ return function(ctx)
   local character=assert(player.Character,"Personnage absent");local humanoid=assert(character:FindFirstChildOfClass("Humanoid"),"Personnage absent")
   local tool=stock.tools[1];A.MutationTool=tool;humanoid:EquipTool(tool)
   assert(waitUntil(function()return tool.Parent==character end,3),"Consommable non equipe")
-  if A.Destroyed or(manual and ctx.Busy()or not manual and not ctx.CanMutate())then error("Mutation interrompue")end
+  if A.Destroyed or(manual and not(ctx.ManualCanContinue and ctx.ManualCanContinue()or not ctx.BeginManual and not ctx.Busy())or not manual and not ctx.CanMutate())then error("Mutation interrompue")end
   record=assert(ownedEggs()[uid],"Oeuf absent");assert(record.Placement and not hasMutation(record,id),"Oeuf modifie")
   ctx.MutationLock(true)
   -- Reserve and persist BEFORE dispatch: an interrupted request must never be retried blindly.
@@ -121,7 +121,6 @@ return function(ctx)
  function A.MutateNext()
   if A.Busy or shared.__SEAAdminRequestLock or not A.Initialized or not ctx.CanMutate()then return true end
   local options=ctx.GetOptions();if not options.AutoMutations then return false end
-  if os.clock()<(A.NextMutationAt or 0)then return true end
   local candidates={};for uid,record in pairs(ownedEggs())do
    if record.Placement and not record.Locked then
     local item=safe(A.EggRecords.ToAssetItemData,record);local rate=item and metric(safe(A.Earnings.RatePerSecond,item))
@@ -134,7 +133,8 @@ return function(ctx)
    local prefix="Mutation"..id;local entry=ledger().entries[candidate.uid..":"..id]
    if options[prefix.."Enabled"]and candidate.rate>options[prefix.."Min"]and stock[id].count>0 and not hasMutation(candidate.record,id)
     and(not entry or not entry.blocked and entry.count<options[prefix.."Attempts"])then
-    A.NextMutationAt=os.clock()+15
+    if os.clock()<(A.NextMutationAt or 0)then return true end
+    A.NextMutationAt=os.clock()+2
     local lock={mutation=true};A.Busy=true;shared.__SEAAdminRequestLock=lock
     local ok,why=pcall(A.ApplyMutation,candidate.uid,id,options[prefix.."Attempts"])
     releaseMutationTool();ctx.MutationLock(false);A.Busy=false;if shared.__SEAAdminRequestLock==lock then shared.__SEAAdminRequestLock=nil end
@@ -144,6 +144,27 @@ return function(ctx)
   end end
   return false
  end
+ function A.ShouldHoldEgg(uid)
+  local options=ctx.GetOptions();if not options.AutoMutations then return false end
+  if not A.Initialized then return true end
+  local record=ownedEggs()[uid];if not record or not record.Placement then return false end
+  local item=safe(A.EggRecords.ToAssetItemData,record);local rate=item and metric(safe(A.Earnings.RatePerSecond,item));if not rate then return false end
+  local stock=mutationTools()
+  for _,id in ipairs(mutationIds)do
+   local prefix="Mutation"..id;local entry=ledger().entries[uid..":"..id]
+   if options[prefix.."Enabled"]and rate>options[prefix.."Min"]and stock[id].count>0 and not hasMutation(record,id)and(not entry or not entry.blocked and entry.count<options[prefix.."Attempts"])then return true end
+  end
+  return false
+ end
+ local function imageId(value)
+  if type(value)=="number"and value>0 and value<math.huge and value%1==0 then value=string.format("%.0f",value)end
+  if type(value)~="string"then return nil end
+  local id=value:match("^rbxassetid://(%d+)$")or value:match("^(%d+)$")or value:match("[?&]id=(%d+)")
+  return id and#id<=20 and id:match("^[1-9]%d*$")and id or nil
+ end
+ local function catalogImage(category,config)
+  return{category=category,name=config.DisplayName or category,eggImageAssetId=config.Egg and imageId(config.Egg.Icon),animalImageAssetId=imageId(config.Icon)}
+ end
  local function row(uid,item,location,isEgg,record)
   local category=isEgg and record.AssetCategory or item.Category
   local config=A.Assets.Directory[category]or{}
@@ -152,6 +173,7 @@ return function(ctx)
   local seconds,grown
   if isEgg and location=="plot"then seconds,grown=ctx.Countdown(record)end
   return {uid=uid,category=category,name=config.DisplayName or category,rarity=tostring(rarity or"Unknown"),location=location,
+   eggImageAssetId=config.Egg and imageId(config.Egg.Icon),animalImageAssetId=imageId(config.Icon),
    mutations=type(item.Mutations)=="table"and#item.Mutations>0 and table.clone(item.Mutations)or nil,baseMutation=record and record.BaseMutation or item.BaseMutation,
    incomePerSecond=metric(safe(A.Earnings.RatePerSecond,item)),weightKg=metric(safe(A.Items.WeightKg,item)),
    sellValue=metric(isEgg and safe(A.EggRecords.SellPrice,record)or safe(A.Items.SalePrice,item)),
@@ -183,7 +205,7 @@ return function(ctx)
   local income=metric(safe(A.Items.ProfileIncomePerSecond,player,p))
   local offline=A.Constants.OFFLINE_ASSETS or{}
   local duration,multiplier=metric(offline.MAX_DURATION_SECONDS),metric(offline.MONEY_RATE_MULTIPLIER)
-  return {eggs=eggs,animals=animals,automationStatus=ctx.GetStatus and tostring(ctx.GetStatus()):sub(1,500)or nil,mutationConsumables=mutationMetadata(),mutationStatus=A.MutationStatus,stats={money=metric(p.Money),speedPower=metric(safe(A.Speed.ReadProjected))or metric(p.SpeedPower),
+  return {eggs=eggs,animals=animals,imageCatalog=A.ImageCatalog,automationStatus=ctx.GetStatus and tostring(ctx.GetStatus()):sub(1,500)or nil,mutationConsumables=mutationMetadata(),mutationStatus=A.MutationStatus,stats={money=metric(p.Money),speedPower=metric(safe(A.Speed.ReadProjected))or metric(p.SpeedPower),
    incomePerSecond=income,offlinePerDay=income and duration and multiplier and income*duration*multiplier,
    offlineDurationSeconds=duration,offlineRateMultiplier=multiplier}}
  end
@@ -212,6 +234,7 @@ return function(ctx)
   assert(root and A.Plot.ContainsLocalPoint(root.Position),"Rejoins ton plot pour placer cet oeuf")
   local frame=assert(ctx.FindSpot(plot,ownedEggs(),{}),"Aucun emplacement libre")
   local worn,why=A.EggState.WearEggTool(uid);assert(worn==true,why)
+  if ctx.ManualCanContinue then assert(ctx.ManualCanContinue(),"Placement interrompu : priorite au vol")end
   A.Dispatched=true;local accepted,reason=A.EggState.PlantEgg(uid,frame);assert(accepted==true,reason)
   return waitUntil(function()local e=ownedEggs()[uid];return e and e.Placement~=nil end,15)
  end
@@ -229,6 +252,7 @@ return function(ctx)
   local deadline=os.clock()+45
   for _,waypoint in ipairs(path:GetWaypoints())do
    assert(os.clock()<deadline and player.Character==character and humanoid.Health>0 and not A.Destroyed,"Trajet interrompu")
+   if ctx.ManualCanContinue then assert(ctx.ManualCanContinue(),"Trajet interrompu : priorite au vol")end
    if waypoint.Action==Enum.PathWaypointAction.Jump then humanoid.Jump=true end
    humanoid:MoveTo(waypoint.Position)
    assert(waitUntil(function()return(root.Position-waypoint.Position).Magnitude<5 end,5),"Chemin bloque")
@@ -248,6 +272,7 @@ return function(ctx)
   local loaded={};local committed=false;local before=table.clone(profile().EggInventory or{})
   local ok,reason=pcall(function()
    for _,uid in ipairs(uids)do
+    if ctx.ManualCanContinue then assert(ctx.ManualCanContinue(),"Fusion differee : priorite au vol")end
     local _,saved=animal(uid);assert(saved and not equipped()[uid],"Animal devenu indisponible")
     request(A.Remotes.Fusery.LoadPet,uid,false);table.insert(loaded,uid)
     assert(waitUntil(function()return table.find(profile().FusionSlots or{},uid)end,5),"Chargement non confirme")
@@ -255,6 +280,7 @@ return function(ctx)
    local slots=profile().FusionSlots or{};assert(#slots==3,"Selection modifiee")
    for _,uid in ipairs(slots)do assert(selected[uid],"Selection modifiee")end
    A.Dispatched=true
+   if ctx.ManualCanContinue then assert(ctx.ManualCanContinue(),"Fusion differee : priorite au vol")end
    local accepted,why,reward=A.Remotes.Fusery.BeginFuse:InvokeServer();assert(accepted==true,why);committed=true
    assert(A.FuseTypes.FuseResult(reward),"Resultat fusion invalide")
    A.Signals.FuseStarted:Fire(reward)
@@ -271,12 +297,45 @@ return function(ctx)
   end
   assert(ok,reason);return true
  end
+ function A.SellAnimals()
+  if A.Destroyed or not A.Initialized or A.Busy or shared.__SEAAdminRequestLock or not ctx.CanMutate()then return 0 end
+  local options=ctx.GetOptions();if not options.AutoSellAnimals then return 0 end
+  local pending=shared.__SEAAnimalSalesPending or{};shared.__SEAAnimalSalesPending=pending
+  local p=profile();for uid in pairs(pending)do if not(p.Inventory or{})[uid]then pending[uid]=nil end end
+  local worn=equipped();local ids,names={},{}
+  for uid,saved in pairs(p.Inventory or{})do
+   if #ids>=64 then break end
+   if not pending[uid]and not worn[uid]and not saved.Locked and not saved.IsFavorite and not table.find(p.FusionSlots or{},uid)then
+    local item=safe(A.Items.Decode,saved);local rate=item and metric(safe(A.Earnings.RatePerSecond,item))
+    if rate and rate>=options.AutoSellAnimalsMin and rate<=options.AutoSellAnimalsMax then
+     table.insert(ids,uid);table.insert(names,tostring(item.Category).." ("..uid..", "..tostring(rate).."/s)")
+    end
+   end
+  end
+  if #ids==0 or not ctx.CanMutate()then return 0 end
+  local lock={animalSale=true};A.Busy=true;shared.__SEAAdminRequestLock=lock;ctx.MutationLock(true)
+  local ok,why=pcall(function()
+   for _,uid in ipairs(ids)do pending[uid]=true end
+   A.Remotes.PetSatchel.SellSelection:FireServer({Assets=ids,Eggs={}})
+   local confirmed=waitUntil(function()local latest=profile().Inventory or{};for _,uid in ipairs(ids)do if latest[uid]then return false end end;return true end,3)
+   if ctx.InventoryNotice then ctx.InventoryNotice((confirmed and"Animaux vendus (inventaire confirme) : "or"Vente animaux en attente, aucun renvoi : ")..table.concat(names," | "))end
+  end)
+  ctx.MutationLock(false);A.Busy=false;if shared.__SEAAdminRequestLock==lock then shared.__SEAAdminRequestLock=nil end
+  if not ok then if ctx.InventoryNotice then ctx.InventoryNotice("Vente animaux incertaine, aucun renvoi : "..tostring(why))end;warn("[SEA Admin] Vente animaux : "..tostring(why))end
+  pcall(A.Publish,true);return #ids
+ end
  function A.Execute(m)
-  if m.action=="settings.update"then
+  if m.action=="images.collect"then
+   local images={};for category,config in pairs(A.Assets.Directory)do
+    if type(category)=="string"and type(config)=="table"then local entry=catalogImage(category,config);if entry.eggImageAssetId or entry.animalImageAssetId then table.insert(images,entry)end end
+   end
+   assert(#images<=5000,"Catalogue trop volumineux");table.sort(images,function(a,b)return a.category<b.category end);A.ImageCatalog=images;A.Signature=nil;return true
+  elseif m.action=="settings.update"then
    assert(ctx.Report.SettingsRevision==m.settingsRevision,"Parametres modifies dans le jeu")
    assert(ctx.SetOptions(m.options),"Parametres invalides");return true
   elseif m.action=="automation.set"then ctx.SetEnabled(m.enabled);return true end
-  assert(not ctx.Busy(),"Coupe AUTO et attends la fin de l’action en cours avant une action manuelle")
+  if ctx.BeginManual then assert(ctx.ManualCanContinue(),"Action manuelle interrompue : priorite au vol")
+  else assert(not ctx.Busy(),"Action en cours")end
   local uid=m.uid
   if m.action=="egg.mutate"then
    local entry=ledger().entries[uid..":"..tostring(m.mutationId)]
@@ -309,9 +368,19 @@ return function(ctx)
   local lock={requestId=m.requestId};shared.__SEAAdminRequestLock=lock
   task.spawn(function()
    A.Dispatched=false
-   local ok,confirmed=pcall(A.Execute,m)
+   local inventoryAction=m.action~="settings.update"and m.action~="automation.set"and m.action~="images.collect"
+   local ok,confirmed=pcall(function()
+    if inventoryAction and ctx.BeginManual then
+     A.ManualPending=true
+     assert(waitUntil(function()return ctx.BeginManual()end,30),"Action differee : un vol ou un oeuf eligible reste prioritaire")
+     A.ManualPending=false
+    end
+    return A.Execute(m)
+   end)
+   A.ManualPending=false
    releaseMutationTool()
    ctx.MutationLock(false)
+   if inventoryAction and ctx.EndManual then ctx.EndManual()end
    local result={version=1,type="admin.command.result",requestId=m.requestId,
     status=ok and confirmed and"confirmed"or(A.Dispatched and"unknown"or"rejected"),
     message=ok and confirmed and(m.action=="egg.mutate"and A.MutationStatus or"Action confirmee par le jeu")or tostring(ok and"Confirmation en attente : aucune relance automatique"or confirmed):sub(1,500)}
@@ -321,7 +390,7 @@ return function(ctx)
    send(result);pcall(A.Publish,true)
   end)
  end
- function A.Destroy()A.Destroyed=true;releaseMutationTool();ctx.Report.AdminReceive=nil end
+ function A.Destroy()A.Destroyed=true;releaseMutationTool();for _,c in ipairs(A.Connections or{})do c:Disconnect()end;ctx.Report.AdminReceive=nil end
  ctx.Report.AdminReceive=A.Receive
  task.spawn(function()
   while not A.Destroyed and not ctx.Ready()do task.wait(.5)end
@@ -337,6 +406,15 @@ return function(ctx)
     local flags=safe(module,spec[1]);A.MutationFlags[id]=flags and flags[spec[2]]
    end
    A.Initialized=true
+   A.Connections={}
+   local function dirty()
+    if A.Destroyed or A.PublishQueued then return end;A.PublishQueued=true
+    task.delay(.5,function()A.PublishQueued=false;if not A.Destroyed then pcall(A.Publish,true)end end)
+   end
+   for _,signal in ipairs({A.EggState.OwnerRefreshed,A.EggState.SnapshotRefreshed})do
+    if signal then table.insert(A.Connections,signal:Connect(dirty))end
+   end
+   if type(A.Save.Watch)=="function"then for _,key in ipairs({"EggInventory","Inventory","EquippedAssets"})do local signal=A.Save.Watch(key);if signal then table.insert(A.Connections,signal:Connect(dirty))end end end
   end)
   if not ok then warn("[SEA Admin] "..tostring(why));return end
   while not A.Destroyed and ctx.Ready()do
