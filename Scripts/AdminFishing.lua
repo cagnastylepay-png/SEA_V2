@@ -91,29 +91,28 @@ return function(ctx)
   local probe=fishing.Probe(point,{char})
   return probe and probe.Water and probe.Point or nil
  end
- local function findBank(char,root,charge)
-  local roots={world:FindFirstChild("AlienLagoon")}
-  local build=world:FindFirstChild("World");build=build and build:FindFirstChild("Build")
-  table.insert(roots,build and build:FindFirstChild("AlienBiomeZone"))
-  local params=RaycastParams.new();params.FilterType=Enum.RaycastFilterType.Exclude;params.FilterDescendantsInstances={char};params.IgnoreWater=false
-  local best,distance;local castDistance=fishing.DistanceFor(charge)
-  for _,zone in pairs(roots)do for _,part in ipairs(zone:GetDescendants())do
-   if part:IsA("BasePart")and(part.Material==Enum.Material.Water or part:GetAttribute("FishingWater")==true or part:GetAttribute("TerrainRole")=="Basin")then
-    local water=waterAt(char,part.Position)
-    if water then for n=0,15 do
-     local angle=n*math.pi/8;local direction=Vector3.new(math.cos(angle),0,math.sin(angle))
-     local edge=math.min(part.Size.X,part.Size.Z)/2+5
-     local point=part.Position+direction*edge
-     local ground=world:Raycast(point+Vector3.new(0,60,0),Vector3.new(0,-140,0),params)
-     if ground and not fishing.IsWaterHit(ground)and ground.Normal.Y>.7 then
-      local stand=ground.Position+Vector3.new(0,3,0)
-      local target=waterAt(char,stand-direction*castDistance)
-      if target then local d=(stand-root.Position).Magnitude;if not distance or d<distance then best={stand=stand,target=target};distance=d end end
-     end
-    end end
-   end
+ -- Fixed dock requested by the owner; Course defines direction, not an out-of-range cast endpoint.
+ function F.DockSite(humanoid)
+  local zone=world:FindFirstChild("World");zone=zone and zone:FindFirstChild("Build");zone=zone and zone:FindFirstChild("AlienBiomeZone")
+  local props=zone and zone:FindFirstChild("Zone14Props");local dock=props and props:FindFirstChild("Dock")
+  local ferry=zone and zone:FindFirstChild("LagoonFerry");local course=ferry and ferry:FindFirstChild("Course")
+  if not dock or not course or not course:IsA("BasePart")then return nil end
+  local deck,bounds,area
+  for _,part in ipairs(dock:GetDescendants())do if part:IsA("BasePart")then
+   local cf,size=part.CFrame,part.Size
+   local span=Vector3.new(math.abs(cf.RightVector.X)*size.X+math.abs(cf.UpVector.X)*size.Y+math.abs(cf.LookVector.X)*size.Z,math.abs(cf.RightVector.Y)*size.X+math.abs(cf.UpVector.Y)*size.Y+math.abs(cf.LookVector.Y)*size.Z,math.abs(cf.RightVector.Z)*size.X+math.abs(cf.UpVector.Z)*size.Y+math.abs(cf.LookVector.Z)*size.Z)
+   local footprint=span.X*span.Z
+   if span.Y<3 and span.X>6 and span.Z>6 and(not area or footprint>area)then deck,bounds,area=part,span,footprint end
   end end
-  return best
+  if not deck then return nil end
+  local delta=Vector3.new(course.Position.X-deck.Position.X,0,course.Position.Z-deck.Position.Z)
+  if delta.Magnitude<1 then return nil end
+  local direction=delta.Unit
+  local margin=4
+  local x=math.abs(direction.X)>.001 and math.max(0,bounds.X/2-margin)/math.abs(direction.X)or math.huge
+  local z=math.abs(direction.Z)>.001 and math.max(0,bounds.Z/2-margin)/math.abs(direction.Z)or math.huge
+  local stand=deck.Position+direction*math.min(x,z)+Vector3.new(0,bounds.Y/2+humanoid.HipHeight+2,0)
+  return{stand=stand,target=course.Position,deck=deck,course=course}
  end
  function F.Cycle(token)
   if os.clock()<F.RetryAt then task.wait(.25);return end
@@ -124,12 +123,12 @@ return function(ctx)
    assert(not flags.DimensionOnly:Get(),"Peche alien indisponible avec DimensionOnly")
    local profile=save.Peek();assert(profile and lagoon.FastEnough(profile.SpeedPower),"Vitesse insuffisante pour la peche alien")
    local charge=(flags.PerfectMin:Get()+flags.PerfectMax:Get())/2
-   local site=F.Site
-   if not site or not waterAt(char,site.target)then site=findBank(char,root,charge);F.Site=site end
-   assert(site,"Aucune berge de peche alien accessible detectee")
-   ctx.Status("PECHE : trajet vers la berge")
+   local site=F.DockSite(humanoid);F.Site=site
+   assert(site,"Dock ou LagoonFerry.Course absent : aucun autre lieu utilise")
+   ctx.Status("PECHE : trajet vers le Dock alien")
    if (root.Position-site.stand).Magnitude>5 then assert(ctx.FishingMove(site.stand,token),"Trajet peche interrompu")end
    assert(valid(token,char),"Peche interrompue")
+   assert(Vector3.new(root.Position.X-site.stand.X,0,root.Position.Z-site.stand.Z).Magnitude<=5 and math.abs(root.Position.Y-site.stand.Y)<=3,"Arrivee sur le Dock non confirmee")
    local tool=assert(F.Equip(token),"Canne absente ou equipement non confirme")
    local camera=assert(world.CurrentCamera,"Camera absente");F.Camera=camera;F.CameraFrame=camera.CFrame
    -- Aim through the native controller's mouse/gamepad ray; verify the water before holding.
@@ -145,6 +144,8 @@ return function(ctx)
    tool:Activate()
    assert(await(token,char,1,function()return visible("Charge")end),"Charge non confirmee par le jeu")
    local target=(flags.PerfectMin:Get()+flags.PerfectMax:Get())/2
+   -- Observe the new cast reset; a previous cast can leave Tag at Perfect for one frame.
+   assert(await(token,char,flags.ChargeSeconds:Get(),function()local value=F.ReadCharge();return value and value<=target*.5 end),"Nouvelle jauge non confirmee : lancer annule")
    assert(await(token,char,flags.ChargeSeconds:Get()*2+1,function()local value=F.ReadCharge();return value and value>=target and fishing.IsPerfect(value)end),"Jauge Perfect non confirmee : lancer annule")
    tool:Deactivate()
    ctx.Status("PECHE : attente de la touche")
