@@ -9,3 +9,9 @@ The fixed site is Workspace.World.Build.AlienBiomeZone.Zone14Props.Dock, facing 
 AUTO OFF, eligible queued egg, remote teleport, manual action, character change, or option change aborts fishing. Cancellation unequips the owned rod before Deactivate, so a charging cancellation cannot release another cast; camera framing is restored. Existing flight arrival and maintenance priorities are preserved.
 
 Validation: AdminFishing, AdminMutations, AdminArrival, AdminMaintenance Studio mocks; full Hub compilation; Render settings and dashboard selector tests. No live cast was executed by these tests.
+
+## Native remotes inspected
+
+Shared.Remotes declares Fishing.Hold (event), Cast (function), Reel (function), Cancel (event), AskClaimMastery (function). FishingController sends Hold with no arguments; Cast receives actual hold duration and the validated water point. Its response includes Id, Wait and Mode. The native controller waits before entering Reeling; it reports Reel(Id, "Caught", actualClicks) only after its meter fills. The controller reveals a reward only when the server returns true and a reward table. Admin continues to use this native controller, without duplicate remote calls or hooks. It waits for native Reveal or an increase in replicated FishingMastery.Caught before displaying a confirmed capture. The pre-bite timeout includes the controller's ten-second server-response allowance, flight time and live bite delay.
+
+AlienLagoon.Request/Arrive/Leave/Travel handle boat travel, and Trade exchanges Void Pearls. They are not fishing casts and Admin does not invoke them. The native FerryMarker helper resolves Course; inside-lagoon state and Scriptable camera transitions block/interupt dock fishing.

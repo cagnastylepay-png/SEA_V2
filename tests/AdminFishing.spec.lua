@@ -9,7 +9,8 @@ return function(source)
  function char:FindFirstChild()return nil end
  function tool:Deactivate()assert(self.Parent~=char,"unequip before release on cancellation");deactivations+=1 end
  function bag:GetChildren()return{tool}end
- local player={Character=char,FindFirstChildOfClass=function()return bag end}
+ local inside=false;local reveal={Visible=false};local gui={Enabled=true,FindFirstChild=function(_,key)return key=="Reveal"and reveal end}
+ local player={GetAttribute=function()return inside end,Character=char,FindFirstChildOfClass=function(_,kind)return kind=="PlayerGui"and{FindFirstChild=function()return gui end}or bag end}
  local modules={Fishing={},FishingFlags={},AlienLagoon={},Save={}}
  function modules.Fishing.IsRod(t)return t==tool end
  function modules.Fishing.EquippedRod(c)return tool.Parent==c and tool or nil end
@@ -19,6 +20,10 @@ return function(source)
  end}}, {__index=getfenv()})
  local chunk=assert(loadstring(source));setfenv(chunk,env)
  local f=chunk()({CanFish=function()return can end})
+ local currentProfile={FishingMastery={Caught=4}};modules.Save.Peek=function()return currentProfile end
+ assert(not f.CaptureConfirmed(4),"hidden meter alone is not capture confirmation")
+ currentProfile.FishingMastery.Caught=5;assert(f.CaptureConfirmed(4),"replicated caught increment confirms capture")
+ currentProfile.FishingMastery.Caught=4;reveal.Visible=true;assert(f.CaptureConfirmed(4),"native reward reveal confirms server acceptance");reveal.Visible=false
  assert(f.DockSite({HipHeight=2})==nil,"missing fixed dock cannot use another bank")
  local deck={Position=Vector3.new(0,10,0),CFrame=CFrame.new(0,10,0),Size=Vector3.new(60,1,20),IsA=function()return true end}
  local course={Position=Vector3.new(100,10,0),IsA=function()return true end}
@@ -43,7 +48,9 @@ return function(source)
  assert(f.Equip(1)==nil,"failed equip confirmation prevents cast")
  equipFails=false;can=false
  assert(f.Equip(1)==nil,"flight priority prevents equip")
- can=true;f.Cancelled=false;assert(f.Equip(1)==tool)
+ can=true;f.Cancelled=false;inside=true;assert(f.Equip(1)==nil,"lagoon state prevents dock fishing");inside=false
+ world.CurrentCamera={CameraType=Enum.CameraType.Scriptable};assert(f.Equip(1)==nil,"boat/cutscene camera blocks equipment");world.CurrentCamera=nil
+ assert(f.Equip(1)==tool)
  f.Cancel();assert(tool.Parent==bag,"cancellation releases rod")
  return "Fishing mocks passed: dynamic Perfect midpoint, rod equipped each cast, failed equip blocked, flight priority, cancellation unequips before release. No live cast executed."
 end

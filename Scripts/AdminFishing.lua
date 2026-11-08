@@ -34,6 +34,10 @@ return function(ctx)
   local track=charge and charge:FindFirstChild("Track");local tag=charge and charge:FindFirstChild("Tag")
   return track and tag and F.ChargeFromTag(track,tag)or nil
  end
+ function F.CaptureConfirmed(before)
+  local current=save.Peek();local caught=current and current.FishingMastery and current.FishingMastery.Caught
+  return visible("Reveal")or(type(before)=="number"and type(caught)=="number"and caught>before)
+ end
  local function parts()
   local char=player.Character
   return char,char and char:FindFirstChildOfClass("Humanoid"),char and char:FindFirstChild("HumanoidRootPart")
@@ -48,6 +52,9 @@ return function(ctx)
   F.Camera=nil;F.CameraFrame=nil
  end
  local function valid(token,char)
+  local camera=world.CurrentCamera
+  local inside=lagoon.Attributes and lagoon.Attributes.Inside or"InAlienLagoon"
+  if player:GetAttribute(inside)==true or(camera and camera.CameraType==Enum.CameraType.Scriptable)then return false end
   return not F.Cancelled and player.Character==char and ctx.CanFish(token)
  end
  local function await(token,char,seconds,predicate)
@@ -69,7 +76,7 @@ return function(ctx)
     if fishing.IsRod(candidate)then tool=candidate;break end
    end end
   end
-  if not tool or not ctx.CanFish(token)then return nil end
+  if not tool or not valid(token,char)then return nil end
   if tool.Parent~=char then humanoid:EquipTool(tool)end
   if not await(token,char,2,function()return tool.Parent==char and fishing.EquippedRod(char)==tool end)then return nil end
   F.Tool=tool;return tool
@@ -95,7 +102,7 @@ return function(ctx)
  function F.DockSite(humanoid)
   local zone=world:FindFirstChild("World");zone=zone and zone:FindFirstChild("Build");zone=zone and zone:FindFirstChild("AlienBiomeZone")
   local props=zone and zone:FindFirstChild("Zone14Props");local dock=props and props:FindFirstChild("Dock")
-  local ferry=zone and zone:FindFirstChild("LagoonFerry");local course=ferry and ferry:FindFirstChild("Course")
+  local ferry=zone and zone:FindFirstChild("LagoonFerry");local course=lagoon.FerryMarker and lagoon.FerryMarkers and lagoon.FerryMarker(lagoon.FerryMarkers.Course)or(ferry and ferry:FindFirstChild("Course"))
   if not dock or not course or not course:IsA("BasePart")then return nil end
   local deck,bounds,area
   for _,part in ipairs(dock:GetDescendants())do if part:IsA("BasePart")then
@@ -121,7 +128,9 @@ return function(ctx)
   local ok,why=pcall(function()
    assert(flags.Enabled:Get(),"Peche fermee")
    assert(not flags.DimensionOnly:Get(),"Peche alien indisponible avec DimensionOnly")
-   local profile=save.Peek();assert(profile and lagoon.FastEnough(profile.SpeedPower),"Vitesse insuffisante pour la peche alien")
+   local profile=save.Peek();local caughtBefore=profile and profile.FishingMastery and profile.FishingMastery.Caught
+   assert(profile and lagoon.FastEnough(profile.SpeedPower),"Vitesse insuffisante pour la peche alien")
+   assert(valid(token,char),"Peche indisponible pendant une transition ou un vol")
    local charge=(flags.PerfectMin:Get()+flags.PerfectMax:Get())/2
    local site=F.DockSite(humanoid);F.Site=site
    assert(site,"Dock ou LagoonFerry.Course absent : aucun autre lieu utilise")
@@ -150,7 +159,7 @@ return function(ctx)
    tool:Deactivate()
    ctx.Status("PECHE : attente de la touche")
    -- Never click during Waiting: the native controller would cancel the cast.
-   local bite=await(token,char,flags.BiteMaxSeconds:Get()+5,function()return visible("Reel")end)
+   local bite=await(token,char,10+fishing.FlightSeconds+flags.BiteMaxSeconds:Get()+2,function()return visible("Reel")end)
    assert(bite,"Aucune touche confirmee")
    ctx.Status("PECHE : remontée")
    local deadline=os.clock()+flags.ReelTimeoutSeconds:Get()+2
@@ -160,6 +169,10 @@ return function(ctx)
     if not await(token,char,interval,function()return not visible("Reel")end)and not valid(token,char)then break end
    end
    if visible("Reel")then error("Remontee interrompue ou expiree")end
+   assert(await(token,char,10,function()
+    return F.CaptureConfirmed(caughtBefore)
+   end),"Capture non confirmee par le jeu : aucun succes suppose")
+   ctx.Status("PECHE : capture confirmee par le jeu")
   end)
   F.Cancel()
   if not ok then F.RetryAt=os.clock()+10;ctx.Status("PECHE : "..tostring(why))else F.RetryAt=os.clock()+flags.CastCooldown:Get()end
