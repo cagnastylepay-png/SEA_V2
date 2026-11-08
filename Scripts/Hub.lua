@@ -2252,6 +2252,7 @@ local function moveActivity(destination, token, interruptForEgg, nextDestination
 	local previous = root.Position
 	local nextCommand = 0
 	while true do
+  if autoActivity=="TO_FISHING"and(player:GetAttribute("InAlienLagoon")==true or(Workspace.CurrentCamera and Workspace.CurrentCamera.CameraType==Enum.CameraType.Scriptable))then stopMovement(true);return false,"transition bateau"end
   if autoActivity=="TO_FISHING"and not FusionModules.Options.AutoFishing then stopMovement(true);return false,"peche OFF"end
   if autoActivity=="TO_TREADMILL"and not FusionModules.Options.AutoTreadmill then stopMovement(true);return false,"tapis OFF"end
 		if not activityValid(token, character) or humanoid.Health <= 0 then

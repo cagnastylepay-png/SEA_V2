@@ -48,7 +48,7 @@ return function(ctx)
   local char,humanoid=parts()
   if tool and tool.Parent==char and humanoid then pcall(function()humanoid:UnequipTools()end)end
   if tool and tool.Parent~=char then pcall(function()tool:Deactivate()end)end
-  if F.Camera and world.CurrentCamera==F.Camera and F.CameraFrame then F.Camera.CFrame=F.CameraFrame end
+  if F.Camera and world.CurrentCamera==F.Camera and F.CameraFrame and F.Camera.CameraType~=Enum.CameraType.Scriptable then F.Camera.CFrame=F.CameraFrame end
   F.Camera=nil;F.CameraFrame=nil
  end
  local function valid(token,char)

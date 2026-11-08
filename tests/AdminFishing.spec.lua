@@ -52,5 +52,6 @@ return function(source)
  world.CurrentCamera={CameraType=Enum.CameraType.Scriptable};assert(f.Equip(1)==nil,"boat/cutscene camera blocks equipment");world.CurrentCamera=nil
  assert(f.Equip(1)==tool)
  f.Cancel();assert(tool.Parent==bag,"cancellation releases rod")
+ local boatCamera={CameraType=Enum.CameraType.Scriptable,CFrame="native-ferry"};world.CurrentCamera=boatCamera;f.Camera=boatCamera;f.CameraFrame="old-fishing";f.Cancel();assert(boatCamera.CFrame=="native-ferry","cleanup must not overwrite boat camera")
  return "Fishing mocks passed: dynamic Perfect midpoint, rod equipped each cast, failed equip blocked, flight priority, cancellation unequips before release. No live cast executed."
 end
