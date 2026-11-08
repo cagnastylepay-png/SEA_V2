@@ -94,6 +94,13 @@ function FusionModules.Helpers.InIncomeRange(key,rate)
   and rate>=FusionModules.Options[key.."Min"]and rate<=FusionModules.Options[key.."Max"]
 end
 
+FusionModules.Options.AutoMutations=false
+for _,id in ipairs({"Boss","Scrambled","Enchanted","Nitro","Spectral"})do
+ FusionModules.Options["Mutation"..id.."Enabled"]=false
+ FusionModules.Options["Mutation"..id.."Min"]=0
+ FusionModules.Options["Mutation"..id.."Attempts"]=1
+end
+
 function FusionModules.Helpers.SetOption(key,value)
  local current=FusionModules.Options[key]
  if current==nil then return false,"Parametre inconnu"end
@@ -124,6 +131,7 @@ function FusionModules.Helpers.RestoreOptions(saved)
   end
  end
  if candidate.AutoEggsMin>candidate.AutoEggsMax or candidate.AutoSellMin>candidate.AutoSellMax or candidate.AutoOpenMin>candidate.AutoOpenMax or candidate.AutoPlaceMin>candidate.AutoPlaceMax or candidate.AutoFuseMin>candidate.AutoFuseMax then return false end
+ for _,id in ipairs({"Boss","Scrambled","Enchanted","Nitro","Spectral"})do local n=candidate["Mutation"..id.."Attempts"];if n%1~=0 or n<1 or n>100 then return false end end
  FusionModules.Options=candidate
  minimumRatePerSecond=candidate.AutoEggsMin;autoIncludeMissingIndex=candidate.AutoIndex;automaticMode=true
  return true
@@ -132,7 +140,7 @@ end
 FusionModules.Busy = false
 FusionModules.Request = shared.__AutoSAEFusionRequest
 function FusionModules.Pending()
-	return FusionModules.Busy or (FusionModules.Request and not FusionModules.Request.done)
+	return FusionModules.MutationBusy or FusionModules.Busy or (FusionModules.Request and not FusionModules.Request.done)
 end
 local EggSaleRemote
 local GameplayBalance
@@ -313,7 +321,7 @@ local function loadSettings()
 		minimumRatePerSecond = minimum * 1e9
 	end
  for key,value in pairs(FusionModules.Options)do
-  if type(value)=="boolean"then FusionModules.Options[key]=automaticMode end
+  if type(value)=="boolean"and key~="AutoMutations"and not key:match("^Mutation")then FusionModules.Options[key]=automaticMode end
  end
  FusionModules.Options.AutoEggsMin=minimumRatePerSecond
  FusionModules.Options.AutoSellMax=minimumRatePerSecond
@@ -2918,6 +2926,12 @@ local function serviceWallMaintenance(token)
 	if not root or isSafe(root.Position) ~= true then return end
 	wallMaintenancePending = false
 	lastMaintenanceAt = os.clock()
+	if FusionModules.Options.AutoMutations and FusionModules.Reporting.ClientKind=="admin" then
+	 if not FusionModules.AdminRuntime or not FusionModules.AdminRuntime.Initialized then return end
+	 local ok,pending=pcall(FusionModules.AdminRuntime.MutateNext)
+	 if not ok then warn("[SEA Admin] AutoMutations : "..tostring(pending));return end
+	 if pending then wallMaintenancePending=true;return end
+	end
 	local opened = hatchReadyEggsOnWallClose(token)
 	if destroyed or not autoEnabled or generation ~= token or queuePaused or FusionModules.YieldToSpawnedEggs() then return end
 	sellInventoryEggsBelowMinimum(token)
@@ -3669,6 +3683,7 @@ end
 function FusionModules.RemoteHop.Try()
  local hop=FusionModules.RemoteHop
  if hop.Processing or serverHopPending or not hop.Pending or os.clock()<hop.RetryAt then return false end
+ if FusionModules.MutationBusy then return false end
  local request=hop.Pending
  if os.clock()>=request.Deadline or not hop.Validate(request.Target,request.Forced)then
   hop.Note("invalid:"..tostring(request.Id),os.clock()>=request.Deadline and "Cible expiree avant le depart"or "Conditions locales non remplies avant le depart",request.Target)
@@ -4863,6 +4878,9 @@ shared.__AutoSAEController = {Destroy = destroy, Gui = gui, Reporting = FusionMo
   Report=FusionModules.Reporting,
   SetRuntime=function(runtime)FusionModules.AdminRuntime=runtime end,
   Ready=function()return ready and not destroyed end,
+  GetOptions=function()return table.clone(FusionModules.Options)end,
+  MutationLock=function(value)FusionModules.MutationBusy=value==true end,
+  CanMutate=function()return not destroyed and ready and automaticMode and autoEnabled and not queuePaused and not currentCycle and not serverHopPending and not FusionModules.Pending() and not inventoryPlacementBusy and not placementRequest and not hatchInProgress end,
   Busy=function()return destroyed or autoEnabled or currentCycle~=nil or inventoryPlacementBusy or placementRequest~=nil or hatchInProgress or FusionModules.Pending() or serverHopPending end,
   Countdown=FusionModules.Helpers.PlotEggCountdown, FindSpot=findPlotEggSpot, AcknowledgeReward=FusionModules.AcknowledgeReward,
   SetEnabled=function(value)return shared.__AutoSAEController.SetEnabled(value)end,

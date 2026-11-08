@@ -18,9 +18,9 @@ return function(ctx)
   if A.Destroyed or not ctx.Report.Ready or not ctx.Report.Socket then return false end
   local ok=pcall(function()
    if m.type=="admin.inventory.snapshot"then
-    local header=table.clone(m);header.eggs=nil;header.animals=nil
+    local header=table.clone(m);header.eggs=nil;header.animals=nil;header.mutationConsumables=nil
     local function array(rows)local out={};for _,r in ipairs(rows)do table.insert(out,Http:JSONEncode(r))end;return"["..table.concat(out,",").."]"end
-    ctx.Report.Socket:Send(Http:JSONEncode(header):sub(1,-2)..',"eggs":'..array(m.eggs)..',"animals":'..array(m.animals)..'}')
+    ctx.Report.Socket:Send(Http:JSONEncode(header):sub(1,-2)..',"eggs":'..array(m.eggs)..',"animals":'..array(m.animals)..',"mutationConsumables":'..array(m.mutationConsumables or{})..'}')
    else ctx.Report.Socket:Send(Http:JSONEncode(m))end
   end)
   return ok
@@ -44,6 +44,105 @@ return function(ctx)
  local function animal(uid)
   local saved=profile().Inventory and profile().Inventory[uid]
   return saved and A.Items.Decode(saved),saved
+ end
+ local mutationIds={"Boss","Scrambled","Enchanted","Nitro","Spectral"}
+ local waitUntil
+ local function hasMutation(record,id)return record.BaseMutation==id or table.find(record.Mutations or{},id)~=nil end
+ local function mutationTools()
+  local rows={};for _,id in ipairs(mutationIds)do rows[id]={id=id,count=0,tools={}}end
+  for _,container in pairs({player:FindFirstChild("Backpack"),player.Character})do
+   if container then for _,tool in ipairs(container:GetChildren())do
+    if tool:IsA("Tool")and tool:GetAttribute("ItemType")=="MutationConsumable"then
+     local id=tool:GetAttribute("MutationId")or"Boss";local r=rows[id];local uses=metric(tool:GetAttribute("Uses"))
+     if r and uses and uses>=1 then r.count+=math.floor(uses);table.insert(r.tools,tool)end
+    end
+   end end
+  end
+  return rows
+ end
+ local function mutationMetadata()
+  local result={};local stock=mutationTools()
+  for _,id in ipairs(mutationIds)do
+   local spec=A.MutationCatalog[id]or{};local source=A.MutationFlags[id]
+   local chance=id=="Enchanted"and 100 or(source and safe(function()return source:Get()end))
+   table.insert(result,{id=id,name=spec.Label or id,count=stock[id].count,successPercent=metric(chance),multiplier=metric(spec.EarningsScalar)})
+  end
+  return result
+ end
+ local function ledger()
+  if A.MutationLedger then return A.MutationLedger end
+  local service=game:GetService("TeleportService")
+  local saved=safe(function()return service:GetTeleportSetting("SEAAdminMutationAttempts")end)
+  A.MutationLedger=type(saved)=="table"and saved.userId==tostring(player.UserId)and type(saved.entries)=="table"and saved or{userId=tostring(player.UserId),entries={}}
+  return A.MutationLedger
+ end
+ local function saveLedger()
+  game:GetService("TeleportService"):SetTeleportSetting("SEAAdminMutationAttempts",ledger())
+ end
+ local function releaseMutationTool()
+  local tool=A.MutationTool;A.MutationTool=nil
+  if tool and player.Character and tool.Parent==player.Character then
+   local humanoid=player.Character:FindFirstChildOfClass("Humanoid");if humanoid then pcall(function()humanoid:UnequipTools()end)end
+  end
+ end
+ function A.ApplyMutation(uid,id,maxAttempts,manual)
+  assert(A.Initialized and not A.Destroyed,"Admin indisponible")
+  local record=assert(ownedEggs()[uid],"Oeuf absent")
+  assert(record.Placement and not record.Locked,"Oeuf non place ou verrouille")
+  assert(not hasMutation(record,id),"Mutation deja presente")
+  local root=player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+  assert(root and A.Plot.ContainsLocalPoint(root.Position),"Rejoins ton plot pour appliquer les mutations")
+  local stock=mutationTools()[id];assert(stock and stock.count>0,"Consommable absent")
+  local key=uid..":"..id;local entries=ledger().entries;local entry=entries[key]or{count=0}
+  assert(not entry.blocked and entry.count<maxAttempts,"Limite atteinte ou resultat incertain")
+  if not entries[key]then local n=0;for _ in pairs(entries)do n+=1 end;assert(n<2000,"Journal des essais plein")end
+  local character=assert(player.Character,"Personnage absent");local humanoid=assert(character:FindFirstChildOfClass("Humanoid"),"Personnage absent")
+  local tool=stock.tools[1];A.MutationTool=tool;humanoid:EquipTool(tool)
+  assert(waitUntil(function()return tool.Parent==character end,3),"Consommable non equipe")
+  if A.Destroyed or(manual and ctx.Busy()or not manual and not ctx.CanMutate())then error("Mutation interrompue")end
+  record=assert(ownedEggs()[uid],"Oeuf absent");assert(record.Placement and not hasMutation(record,id),"Oeuf modifie")
+  ctx.MutationLock(true)
+  -- Reserve and persist BEFORE dispatch: an interrupted request must never be retried blindly.
+  entry.count+=1;entry.blocked=true;entries[key]=entry;saveLedger()
+  A.Dispatched=true
+  A.MutationStatus="Essai "..entry.count.."/"..maxAttempts.." : "..id.." sur "..uid
+  local ok,result=pcall(function()return A.Remotes.BossMastery.AskUseMutationConsumable:InvokeServer(uid)end)
+  releaseMutationTool()
+  assert(ok and type(result)=="table"and result.Success==true,"Resultat mutation non confirme : aucune relance")
+  assert(result.MutationId==nil or result.MutationId==id,"Mutation retournee inattendue")
+  if result.Mutated==true then
+   assert(waitUntil(function()local r=ownedEggs()[uid];return r and hasMutation(r,id)end,12),"Mutation en attente de synchronisation")
+   A.MutationStatus=id.." appliquee a "..uid
+  elseif result.Mutated==false then A.MutationStatus=id.." : essai echoue "..entry.count.."/"..maxAttempts
+  else error("Resultat mutation incomplet : aucune relance")end
+  entry.blocked=false;saveLedger();A.Signature=nil
+  return true
+ end
+ function A.MutateNext()
+  if A.Busy or shared.__SEAAdminRequestLock or not A.Initialized or not ctx.CanMutate()then return true end
+  local options=ctx.GetOptions();if not options.AutoMutations then return false end
+  if os.clock()<(A.NextMutationAt or 0)then return true end
+  local candidates={};for uid,record in pairs(ownedEggs())do
+   if record.Placement and not record.Locked then
+    local item=safe(A.EggRecords.ToAssetItemData,record);local rate=item and metric(safe(A.Earnings.RatePerSecond,item))
+    if rate then table.insert(candidates,{uid=uid,record=record,rate=rate})end
+   end
+  end
+  table.sort(candidates,function(a,b)return a.rate>b.rate end)
+  local stock=mutationTools()
+  for _,candidate in ipairs(candidates)do for _,id in ipairs(mutationIds)do
+   local prefix="Mutation"..id;local entry=ledger().entries[candidate.uid..":"..id]
+   if options[prefix.."Enabled"]and candidate.rate>options[prefix.."Min"]and stock[id].count>0 and not hasMutation(candidate.record,id)
+    and(not entry or not entry.blocked and entry.count<options[prefix.."Attempts"])then
+    A.NextMutationAt=os.clock()+15
+    local lock={mutation=true};A.Busy=true;shared.__SEAAdminRequestLock=lock
+    local ok,why=pcall(A.ApplyMutation,candidate.uid,id,options[prefix.."Attempts"])
+    releaseMutationTool();ctx.MutationLock(false);A.Busy=false;if shared.__SEAAdminRequestLock==lock then shared.__SEAAdminRequestLock=nil end
+    if not ok then A.MutationStatus=tostring(why):sub(1,500);warn("[SEA Admin] "..A.MutationStatus)end
+    pcall(A.Publish,true);return true
+   end
+  end end
+  return false
  end
  local function row(uid,item,location,isEgg,record)
   local category=isEgg and record.AssetCategory or item.Category
@@ -84,7 +183,7 @@ return function(ctx)
   local income=metric(safe(A.Items.ProfileIncomePerSecond,player,p))
   local offline=A.Constants.OFFLINE_ASSETS or{}
   local duration,multiplier=metric(offline.MAX_DURATION_SECONDS),metric(offline.MONEY_RATE_MULTIPLIER)
-  return {eggs=eggs,animals=animals,stats={money=metric(p.Money),speedPower=metric(safe(A.Speed.ReadProjected))or metric(p.SpeedPower),
+  return {eggs=eggs,animals=animals,mutationConsumables=mutationMetadata(),mutationStatus=A.MutationStatus,stats={money=metric(p.Money),speedPower=metric(safe(A.Speed.ReadProjected))or metric(p.SpeedPower),
    incomePerSecond=income,offlinePerDay=income and duration and multiplier and income*duration*multiplier,
    offlineDurationSeconds=duration,offlineRateMultiplier=multiplier}}
  end
@@ -95,7 +194,7 @@ return function(ctx)
   local m=table.clone(data);m.version=1;m.type="admin.inventory.snapshot";m.sessionId=A.Session;m.revision=A.Revision+1
   if send(m)then A.Revision=m.revision;A.Signature=signature;A.SentAt=os.clock()end
  end
- local function waitUntil(fn,seconds)
+ waitUntil=function(fn,seconds)
   local deadline=os.clock()+seconds
   repeat if A.Destroyed then error("Admin arrete")end;if fn()then return true end;task.wait(.1)until os.clock()>=deadline
   return false
@@ -179,7 +278,10 @@ return function(ctx)
   elseif m.action=="automation.set"then ctx.SetEnabled(m.enabled);return true end
   assert(not ctx.Busy(),"Coupe AUTO et attends la fin de l’action en cours avant une action manuelle")
   local uid=m.uid
-  if m.action=="egg.open"then
+  if m.action=="egg.mutate"then
+   local entry=ledger().entries[uid..":"..tostring(m.mutationId)]
+   return A.ApplyMutation(uid,m.mutationId,(entry and entry.count or 0)+1,true)
+  elseif m.action=="egg.open"then
    local record=assert(ownedEggs()[uid],"Oeuf absent");assert(record.Placement,"Oeuf non place")
    local _,grown=ctx.Countdown(record);assert(grown,"Oeuf pas encore pret")
    A.Dispatched=true;local accepted,why=A.Renderer.ActivateLocalEgg(uid);assert(accepted==true,why)
@@ -208,16 +310,18 @@ return function(ctx)
   task.spawn(function()
    A.Dispatched=false
    local ok,confirmed=pcall(A.Execute,m)
+   releaseMutationTool()
+   ctx.MutationLock(false)
    local result={version=1,type="admin.command.result",requestId=m.requestId,
     status=ok and confirmed and"confirmed"or(A.Dispatched and"unknown"or"rejected"),
-    message=ok and confirmed and"Action confirmee par le jeu"or tostring(ok and"Confirmation en attente : aucune relance automatique"or confirmed):sub(1,500)}
+    message=ok and confirmed and(m.action=="egg.mutate"and A.MutationStatus or"Action confirmee par le jeu")or tostring(ok and"Confirmation en attente : aucune relance automatique"or confirmed):sub(1,500)}
    A.Seen[m.requestId]=result;A.SeenOrder=A.SeenOrder or{};table.insert(A.SeenOrder,m.requestId)
    if #A.SeenOrder>100 then A.Seen[table.remove(A.SeenOrder,1)]=nil end
    A.Busy=false;if shared.__SEAAdminRequestLock==lock then shared.__SEAAdminRequestLock=nil end
    send(result);pcall(A.Publish,true)
   end)
  end
- function A.Destroy()A.Destroyed=true;ctx.Report.AdminReceive=nil end
+ function A.Destroy()A.Destroyed=true;releaseMutationTool();ctx.Report.AdminReceive=nil end
  ctx.Report.AdminReceive=A.Receive
  task.spawn(function()
   while not A.Destroyed and not ctx.Ready()do task.wait(.5)end
@@ -228,6 +332,10 @@ return function(ctx)
    A.Constants=module("Shared.Globals.Constants");A.Roster=module("Client.AssetRoster");A.Plot=module("Client.PlotState")
    A.Speed=module("Client.SpeedPowerProjection");A.Remotes=module("Shared.Remotes");A.Renderer=module("Shared.Eggs.PlacedEggRenderer")
    A.Kernel=module("Shared.Util.FuseKernel");A.Signals=module("Client.FuseMachineSignals");A.FuseTypes=module("Shared.Types.FuseMachine")
+   A.MutationCatalog=module("Shared.Modules.Mutations.Catalog");A.MutationFlags={}
+   for id,spec in pairs({Boss={"Shared.Flags.BossMasteryFlags","MutationConsumableSuccessPercent"},Scrambled={"Shared.Flags.ScrambleMutationFlags","SuccessPercent"},Nitro={"Shared.Flags.RaceRallyFlags","NitroSuccessPercent"},Spectral={"Shared.Flags.TrainEventFlags","SpectralSuccessPercent"}})do
+    local flags=safe(module,spec[1]);A.MutationFlags[id]=flags and flags[spec[2]]
+   end
    A.Initialized=true
   end)
   if not ok then warn("[SEA Admin] "..tostring(why));return end
