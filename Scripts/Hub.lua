@@ -3139,6 +3139,24 @@ do
  end
 end
 
+-- Fishing follows the butterfly route: StartArea center first, then the dock in X/Z.
+function FusionModules.Helpers.FishingMove(destination,token)
+ local character,_,root=getCharacterParts()
+ if not root or not FusionModules.Options.AutoFishing or not activityValid(token,character)or not automaticMode or next(queuedEggs)then return false,"trajet peche annule"end
+ local departure,reason=getStartAreaDestination()
+ if not departure then return false,reason end
+ autoActivity="TO_FISHING"
+ setStatus("PECHE : sortie par le centre de StartArea...")
+ local target=Vector3.new(destination.X,departure.Y,destination.Z)
+ local reached,detail=moveActivity(departure,token,true,target)
+ if not reached then return false,detail end
+ if not activityValid(token,character)or not automaticMode or not FusionModules.Options.AutoFishing or next(queuedEggs)then return false,"priorite au vol ou peche OFF"end
+ setStatus("PECHE : trajet vers le Dock alien...")
+ local arrived,arrivalReason=moveActivity(Vector3.new(destination.X,root.Position.Y,destination.Z),token,true)
+ autoActivity="FISHING"
+ return arrived,arrivalReason
+end
+
 local function idleOnTreadmill(token)
  if FusionModules.Reporting.ClientKind=="admin"and FusionModules.Options.AutoFishing then
   if treadmillAssigned then leaveTreadmill(token)end
@@ -5015,7 +5033,7 @@ shared.__AutoSAEController = {Destroy = destroy, Gui = gui, Reporting = FusionMo
   end,
   MutationLock=function(value)FusionModules.MutationBusy=value==true end,
   Status=function(text)setStatus(text)end,
-  FishingMove=function(destination,token)autoActivity="TO_FISHING";local ok=moveActivity(destination,token,true);autoActivity="FISHING";return ok end,
+  FishingMove=function(destination,token)return FusionModules.Helpers.FishingMove(destination,token)end,
   CanFish=function(token)
    if destroyed or not ready or not autoEnabled or generation~=token or not automaticMode or queuePaused or not FusionModules.Options.AutoFishing or currentCycle or serverHopPending or inventoryPlacementBusy or placementRequest or hatchInProgress or FusionModules.Pending()then return false end
    if FusionModules.AdminRuntime and FusionModules.AdminRuntime.ManualPending then return false end
@@ -5075,5 +5093,3 @@ task.spawn(function()
 		log("ERROR", "%s", tostring(failure))
 	end
 end)
-
-
