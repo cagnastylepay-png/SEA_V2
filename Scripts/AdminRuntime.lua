@@ -397,7 +397,7 @@ return function(ctx)
   if A.FishingRetryAt and os.clock()<A.FishingRetryAt then task.wait(.25);return end
   local ok,why=pcall(function()
   if not A.Fishing then
-   local chunk,why=loadstring(game:HttpGet("https://raw.githubusercontent.com/cagnastylepay-png/SEA_V2/main/Scripts/AdminFishing.lua"),"SEA_V2/AdminFishing")
+   local chunk,why=loadstring(game:HttpGet("https://raw.githubusercontent.com/cagnastylepay-png/SEA_V2/main/Scripts/AdminFishing.lua?v="..tostring(os.time())),"SEA_V2/AdminFishing-native-ready-2")
    if not chunk then ctx.Status("PECHE : "..tostring(why));return end
    A.Fishing=chunk()(ctx)
   end

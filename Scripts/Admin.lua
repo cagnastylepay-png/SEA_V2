@@ -1,5 +1,6 @@
+local ADMIN_BUILD="20261108-fishing-native-ready-2"
 if shared.__SEAAdminBoot then return shared.__SEA_V2Admin end
-if shared.__SEA_V2Admin and not shared.__SEA_V2Admin.Destroyed and shared.__SEA_V2Admin.JobId==game.JobId and os.clock()-(shared.__SEA_V2Admin.StartedAt or -math.huge)<10 then return shared.__SEA_V2Admin end
+if shared.__SEA_V2Admin and shared.__SEA_V2Admin.Build==ADMIN_BUILD and not shared.__SEA_V2Admin.Destroyed and shared.__SEA_V2Admin.JobId==game.JobId and os.clock()-(shared.__SEA_V2Admin.StartedAt or -math.huge)<10 then return shared.__SEA_V2Admin end
 local function boot()
 -- Background Admin: no ScreenGui, icon or in-game controls.
 local engine=shared.__AutoSAEController
@@ -18,17 +19,17 @@ local options=type(saved)=="table"and table.clone(saved)or{}
 options.ClientKind="admin";options.Headless=true
 shared.__AutoSAEReportingOptions=options
 local ok,reason=pcall(function()
- local run,err=loadstring(game:HttpGet("https://raw.githubusercontent.com/cagnastylepay-png/SEA_V2/main/Scripts/Hub.lua"),"SEA_V2/Hub")
+ local run,err=loadstring(game:HttpGet("https://raw.githubusercontent.com/cagnastylepay-png/SEA_V2/main/Scripts/Hub.lua?v="..tostring(os.time())),"SEA_V2/Hub")
  assert(run,err);run()
 end)
 shared.__AutoSAEReportingOptions=saved
 assert(ok,reason)
 local controller=assert(shared.__AutoSAEController,"Admin engine absent")
-local run,err=loadstring(game:HttpGet("https://raw.githubusercontent.com/cagnastylepay-png/SEA_V2/main/Scripts/AdminRuntime.lua"),"SEA_V2/AdminRuntime")
+local run,err=loadstring(game:HttpGet("https://raw.githubusercontent.com/cagnastylepay-png/SEA_V2/main/Scripts/AdminRuntime.lua?v="..tostring(os.time())),"SEA_V2/AdminRuntime")
 assert(run,err)
 local runtime=run()(assert(controller.AdminContext,"Admin context absent"))
 controller.AdminContext.SetRuntime(runtime)
-local Admin={Destroyed=false,JobId=game.JobId,StartedAt=os.clock()}
+local Admin={Build=ADMIN_BUILD,Destroyed=false,JobId=game.JobId,StartedAt=os.clock()}
 function Admin.Destroy()
  if Admin.Destroyed then return end
  Admin.Destroyed=true;runtime.Destroy();controller.Destroy()
