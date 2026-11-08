@@ -1,6 +1,10 @@
 -- Background Admin: no ScreenGui, icon or in-game controls.
 local previous=shared.__SEA_V2Admin
 if previous and type(previous.Destroy)=="function"then pcall(previous.Destroy)end
+if not shared.__SEAObserverController or shared.__SEAObserverController.Destroyed then
+ local start,err=loadstring(game:HttpGet("https://raw.githubusercontent.com/cagnastylepay-png/SEA_V2/main/Scripts/Observer.lua"),"SEA_V2/Observer")
+ assert(start,err);start()
+end
 local saved=shared.__AutoSAEReportingOptions
 local options=type(saved)=="table"and table.clone(saved)or{}
 options.ClientKind="admin";options.Headless=true

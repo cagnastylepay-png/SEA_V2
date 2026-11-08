@@ -821,11 +821,10 @@ function FusionModules.Helpers.DescribeSavedAnimal(saved)
  return FusionModules.Helpers.DescribeAnimal(ok and item or nil)
 end
 
--- Optional observation transport. It never changes the collection queue or executes remote commands.
+-- Control reporting shares Observer's transport; field/player collection lives in Observer.lua.
 FusionModules.Reporting = {
  Enabled=true, Url="wss://m4gix-ws.onrender.com/sae/ws", Socket=nil, Ready=false,
- Connections={}, Revision=0, Cycle=nil, Waiting=false, Dirty=true, Due=0,
- LastSent=0, LastAck=0, NextConnect=0, Backoff=2, Connecting=false, Serial=0,
+ Serial=0,
 }
 do
  local report=FusionModules.Reporting
@@ -919,415 +918,88 @@ do
  function report.Log(message,...)
   log("REPORT",message,...)
  end
+ function report.ApplyPolicy(message)
+  report.PolicyKnown=true
+  report.TeleportAllowed=message.sendTeleport==true and message.admin==true
+  if not report.TeleportAllowed and FusionModules.RemoteHop then FusionModules.RemoteHop.Pending=nil end
+  report.LogsAllowed=message.sendLogs==true
+  if report.SettingsAllowed~=(message.sendSettings==true)then
+   report.SettingsAllowed=message.sendSettings==true
+   if report.SettingsAllowed then report.MarkSettingsDirty()end
+  end
+  if not report.LogsAllowed then table.clear(executorTools.RemoteLogQueue)else report.ScheduleLogs()end
+ end
+ function report.SyncObserver()
+  local observer=report.Observer
+  if not observer then return end
+  if report.Socket~=observer.Socket then
+   report.Serial+=1;report.SettingsDirty=true;report.SettingsPending=nil;report.AppliedPolicy=nil
+   report.PolicyKnown=false;report.LogsAllowed=false;report.SettingsAllowed=false;report.TeleportAllowed=false
+   report.Socket=observer.Socket
+  end
+  report.Ready=observer.Ready and not observer.Destroyed
+  report.LogIdentityReady=observer.IdentityReady
+  if observer.LastPolicy and report.AppliedPolicy~=observer.LastPolicy then
+   report.AppliedPolicy=observer.LastPolicy;report.ApplyPolicy(observer.LastPolicy)
+  end
+  if report.Ready and report.LogIdentityReady then report.ScheduleSettings();report.ScheduleLogs()end
+ end
+ function report.Receive(message)
+  if destroyed then return end
+  report.SyncObserver()
+  if message.type=="admin.command"then
+   if report.ClientKind=="admin"and report.SettingsAllowed and report.AdminReceive then report.AdminReceive(message)end
+  elseif message.type=="teleport.request"then
+   if FusionModules.RemoteHop then FusionModules.RemoteHop.Receive(message)end
+  elseif message.type=="settings.ack"and message.sessionId==report.SessionId then
+   if report.SettingsPending==message.revision then report.SettingsPending=nil end
+  elseif message.type=="logs.ack"and message.sessionId==report.SessionId then
+   local upto=tonumber(message.sequence)
+   if upto then while executorTools.RemoteLogQueue[1]and executorTools.RemoteLogQueue[1].sequence<=upto do table.remove(executorTools.RemoteLogQueue,1)end end
+   report.ScheduleLogs()
+  elseif message.type=="error"then report.Log("Render : %s",tostring(message.message))end
+ end
  function report.Disconnect()
-  if FusionModules.RemoteHop then FusionModules.RemoteHop.Pending=nil end
-  report.Serial+=1
-  report.Ready=false
-  report.LogIdentityReady=false
-  report.PolicyKnown=false;report.LogsAllowed=false;report.SettingsAllowed=false;report.SettingsDirty=true
-  report.PendingRevision=nil
-  for _,connection in ipairs(report.Connections) do pcall(function()connection:Disconnect()end) end
-  table.clear(report.Connections)
-  local socket=report.Socket
+  report.Serial+=1;report.Ready=false;report.LogIdentityReady=false
+  report.PolicyKnown=false;report.SettingsAllowed=false;report.LogsAllowed=false;report.TeleportAllowed=false;report.SettingsDirty=true
   report.Socket=nil
-  if socket then pcall(function()socket:Close()end) end
+  if destroyed then
+   if report.UnsubscribeObserver then report.UnsubscribeObserver();report.UnsubscribeObserver=nil end
+   if report.Observer then report.Observer.Release(report.SessionId)end
+  elseif report.Observer then report.Observer.Disconnect()end
  end
- function report.MarkDirty(delay)
-  if not report.Dirty or report.Due==0 then report.Due=os.clock()+(delay or .75) end
-  report.Dirty=true
- end
- function report.Reset()
-  report.Waiting=true
-  report.Dirty=true
-  report.Due=os.clock()+1
- end
- function report.Revealed(payload)
-  if type(payload)~="table" or type(payload.PeriodIndex)~="number" then return end
-  report.Cycle=tostring(math.floor(payload.PeriodIndex))
-  report.ForceSnapshot=true
-  report.ForcePlayers=true
-  report.MarkPlayersDirty()
-  report.Waiting=false
-  report.MarkDirty(1)
-  -- Rarity reveal follows the batch; refresh the official field snapshot without blocking gameplay.
-  task.spawn(function()
-   local ok,err=pcall(EggState.SyncFieldEggs)
-   if not ok then report.Log("Snapshot apres reset indisponible : %s",tostring(err)) end
-  end)
- end
- function report.BuildSnapshot()
-  if report.Waiting or not ready then return nil end
-  local now=ServerClock.Now()
-  local cycle=report.Cycle or tostring(AreaEggCycle.ActivePeriodIndexAt(now))
-  local eggs={}
-  local observed=table.clone(records)
-  for uid in pairs(trackedEggs) do
-   if not observed[uid] then local record=readField(uid);if record then observed[uid]=record end end
-  end
-  for uid,record in pairs(observed) do
-   local rarity=getRarityName(record)
-   do -- Send every local egg rarity; Render filters its own history.
-    local rate=getRatePerSecond(record)
-    local weight=getWeightKg(record)
-    local entry={uid=uid,category=record.AssetCategory,name=getAnimalName(record),rarity=rarity,
-     state=record.State,areaId=record.AreaId and tostring(record.AreaId),zone=record.Zone and tostring(record.Zone),
-     assetScale=record.AssetScale,nestId=record.NestId,nestScale=record.NestScale,eyeColor=record.AssetEyeColor,
-     colorSeed=record.AssetColorSeed,colorIndex=record.AssetColorIndex,version=record.Version,droppedAt=record.DroppedAt,hasParasite=record.HasParasite==true,baseMutation=record.BaseMutation,gender=record.AssetGender,
-     personality=record.AssetPersonality,skin=record.EggSkin,ownerUserId=record.OwnerUserId,carrierUserId=record.CarrierUserId,
-     observationOnly=record.ObservationOnly==true}
-    if type(record.Mutations)=="table" then entry.mutations=table.clone(record.Mutations) end
-    if typeof(record.BottomCFrame)=="CFrame" then
-     local pos=record.BottomCFrame.Position
-     entry.position={x=pos.X,y=pos.Y,z=pos.Z}
-     entry.cframe={record.BottomCFrame:GetComponents()}
-    end
-    local config=Assets.Directory[record.AssetCategory]
-    if config and config.Egg then entry.icon=config.Egg.Icon end
-    local valued,value=pcall(EggRecords.SellPrice,record)
-    if not valued then
-     valued,value=pcall(function()
-      local item=EggRecords.ToAssetItemData(record)
-      item.Mutations={}
-      item.BaseMutation=nil
-      return require(ReplicatedStorage.Shared.Util.AssetItems).SalePrice(item)*GameplayBalance.Eggs.SELL_PRICE_SHARE
-     end)
-    end
-    if valued and type(value)=="number" and value==value and value>=0 and value<math.huge then entry.sellValue=value end
-    -- JSON null is filled by Encode for unknown metrics.
-    if type(rate)=="number" and rate==rate and rate>=0 and rate<math.huge then entry.incomePerSecond=rate end
-    if type(weight)=="number" and weight==weight and weight>=0 and weight<math.huge then entry.weightKg=weight end
-    table.insert(eggs,entry)
-   end
-  end
-  table.sort(eggs,function(a,b)return a.uid<b.uid end)
-  if #eggs>500 then error("Snapshot reporting depasse 500 oeufs ; envoi annule") end
-  return {version=1,type="eggs.snapshot",moduleId="EggReporter",sessionId=report.SessionId,
-   placeId=tostring(game.PlaceId),jobId=game.JobId,cycleId=cycle,revision=report.Revision+1,
-   observedAt=os.date("!%Y-%m-%dT%H:%M:%SZ"),eggs=eggs,cycleEndsAt=AreaEggCycle.NextNightTime(now)}
- end
- function report.Encode(message)
-  -- Encode each egg separately so unknown metrics and empty arrays are unambiguous.
-  local encoded={}
-  for _,egg in ipairs(message.eggs) do
-   local item=HttpService:JSONEncode(egg)
-   if egg.weightKg==nil then item=item:sub(1,-2)..',"weightKg":null}' end
-   if egg.incomePerSecond==nil then item=item:sub(1,-2)..',"incomePerSecond":null}' end
-   table.insert(encoded,item)
-  end
-  local header=table.clone(message)
-  header.eggs=nil
-  return HttpService:JSONEncode(header):sub(1,-2)..',"eggs":['..table.concat(encoded,",")..']}'
- end
- function report.SendSnapshot()
-  if not report.Ready or not report.Socket then return false end
-  local message=report.BuildSnapshot()
-  if not message or message.jobId=="" then return false end
-  local fingerprint={message.cycleId}
-  for _,egg in ipairs(message.eggs) do
-   table.insert(fingerprint,HttpService:JSONEncode(egg))
-  end
-  local signature=tostring(message.cycleEndsAt)..";"..table.concat(fingerprint,";")
-  if signature==report.LastFingerprint and not report.ForceSnapshot then
-   report.Dirty=false
-   return false
-  end
-  local socket=report.Socket
-  local ok,err=pcall(function()socket:Send(report.Encode(message))end)
-  if not ok then
-   report.Log("Envoi echoue : %s",tostring(err))
-   report.Disconnect()
-   report.NextConnect=os.clock()+report.Backoff
-   return false
-  end
-  report.LastFingerprint=signature
-  report.ForceSnapshot=false
-  report.Revision=message.revision
-  report.LastSent=os.clock()
-  report.PendingRevision=message.revision
-  report.PendingAt=report.LastSent
-  report.Dirty=false
-  report.Log("Snapshot envoye Cycle=%s Revision=%d Oeufs=%d",message.cycleId,message.revision,#message.eggs)
-  return true
- end
- function report.Connect()
-  if report.Connecting or report.Socket or destroyed then return end
-  local api=executorEnvironment.WebSocket or getfenv().WebSocket
-  if not api and type(executorEnvironment.syn)=="table" then api=executorEnvironment.syn.websocket end
-  local connector=api and (api.connect or api.Connect)
-  if type(connector)~="function" then
-   report.Log("WebSocket.connect indisponible ; reporting desactive pour cette session")
-   report.Enabled=false
-   return
-  end
-  report.Connecting=true
-  report.ConnectingAt=os.clock()
-  local serial=report.Serial
-  task.spawn(function()
-   local ok,socket=pcall(connector,report.Url)
-   if destroyed or serial~=report.Serial or not report.Enabled then
-    if ok and socket then pcall(function()socket:Close()end) end
-    return
-   end
-   report.Connecting=false
-   if not ok or not socket then
-    report.Log("Connexion echouee : %s ; nouvel essai dans %d s",tostring(socket):sub(1,240),report.Backoff)
-    report.NextConnect=os.clock()+report.Backoff
-    report.Backoff=math.min(report.Backoff*2,60)
-    return
-   end
-   report.Socket=socket
-   local bound,err=pcall(function()
-    table.insert(report.Connections,socket.OnMessage:Connect(function(raw)
-     if destroyed or report.Socket~=socket then return end
-     local parsed,message=pcall(HttpService.JSONDecode,HttpService,raw)
-     if not parsed or type(message)~="table" then report.Log("Message serveur invalide");return end
-     if message.type=="hello.ack" and message.role=="reporter" then
-      report.Ready=true
-      report.ForceSnapshot=true
-      report.ForcePlayers=true
-      report.PlayersDirty=true
-      report.Backoff=2
-      report.LastAck=os.clock()
-      report.MarkDirty(.25)
-      report.Log("Connexion confirmee par le serveur")
-     elseif message.type=="eggs.ack" and message.sessionId==report.SessionId then
-      report.LastAck=os.clock()
-      if message.revision==report.PendingRevision then report.PendingRevision=nil end
-      report.Log("Accuse Cycle=%s Revision=%s Accepte=%s",tostring(message.cycleId),tostring(message.revision),tostring(message.accepted))
-     elseif message.type=="reporting.policy" then
-      report.PolicyKnown=true
-      report.TeleportAllowed=message.sendTeleport==true and message.admin==true
-      if not report.TeleportAllowed and FusionModules.RemoteHop then FusionModules.RemoteHop.Pending=nil end
-      report.LogsAllowed=message.sendLogs==true
-      if report.SettingsAllowed~= (message.sendSettings==true)then
-       report.SettingsAllowed=message.sendSettings==true
-       if report.SettingsAllowed then report.MarkSettingsDirty()end
-      end
-      if not report.LogsAllowed then table.clear(executorTools.RemoteLogQueue)else report.ScheduleLogs()end
-      if FusionModules.RefreshParams then FusionModules.RefreshParams()end
-     elseif message.type=="admin.command" then
-      if report.ClientKind=="admin" and report.SettingsAllowed and report.AdminReceive then report.AdminReceive(message)end
-     elseif message.type=="teleport.request" then
-      if FusionModules.RemoteHop then FusionModules.RemoteHop.Receive(message)end
-     elseif message.type=="settings.ack" and message.sessionId==report.SessionId then
-      if report.SettingsPending==message.revision then report.SettingsPending=nil end
-     elseif message.type=="logs.ack" and message.sessionId==report.SessionId then
-      local upto=tonumber(message.sequence)
-      if upto then
-       while executorTools.RemoteLogQueue[1]and executorTools.RemoteLogQueue[1].sequence<=upto do table.remove(executorTools.RemoteLogQueue,1)end
-      end
-      report.ScheduleLogs()
-     elseif message.type=="players.ack" then
-      report.LastPlayersAck=os.clock()
-      if message.accepted then report.LogIdentityReady=true;report.ScheduleLogs();report.ScheduleSettings()end
-     elseif message.type=="error" then
-      report.Log("Erreur serveur : %s",tostring(message.message))
-     end
-    end))
-    table.insert(report.Connections,socket.OnClose:Connect(function()
-     if report.Socket~=socket then return end
-     report.Log("Connexion fermee ; reconnexion programmee")
-     report.Disconnect()
-     report.NextConnect=os.clock()+report.Backoff
-     report.Backoff=math.min(report.Backoff*2,60)
-    end))
-    socket:Send(HttpService:JSONEncode({version=1,type="hello",role="reporter",clientKind=report.ClientKind,reporterUserId=tostring(player.UserId),token=report.Token}))
-   end)
-   if not bound then
-    report.Log("Initialisation socket echouee : %s",tostring(err))
-    report.Disconnect()
-    report.NextConnect=os.clock()+report.Backoff
-   else
-    report.HelloDeadline=os.clock()+15
-   end
-  end)
- end
-
- -- Presence has independent revisions and is not delayed by an egg reset.
- report.PlayerConnections={}
- report.PlayersDirty=true
- report.PlayerRevision=0
- report.LastPlayersSent=0
- function report.MarkPlayersDirty()report.PlayersDirty=true end
- function report.TrackPlayer(target)
-  if report.PlayerConnections[target] then return end
-  local bag={Base={},Character={}}
-  report.PlayerConnections[target]=bag
-  local function bind(signal,callback,list)
-   table.insert(list or bag.Base,signal:Connect(callback))
-  end
-  local function characterAdded()
-   report.MarkPlayersDirty()
-  end
-  local function statAdded(child)
-   if child:IsA("ValueBase") and child.Parent and child.Parent.Name=="leaderstats" then bind(child.Changed,report.MarkPlayersDirty)end
-  end
-  bind(target.CharacterAdded,characterAdded)
-  bind(target.CharacterRemoving,report.MarkPlayersDirty)
-  bind(target.AttributeChanged,report.MarkPlayersDirty)
-  bind(target:GetPropertyChangedSignal("DisplayName"),report.MarkPlayersDirty)
-  bind(target.DescendantAdded,statAdded)
-  bind(target.DescendantRemoving,report.MarkPlayersDirty)
-  for _,child in ipairs(target:GetDescendants())do statAdded(child)end
-  if target.Character then characterAdded(target.Character)end
-  report.MarkPlayersDirty()
- end
- function report.UntrackPlayer(target)
-  local bag=report.PlayerConnections[target]
-  if bag then
-   for _,list in pairs(bag)do for _,connection in ipairs(list)do pcall(function()connection:Disconnect()end)end end
-   report.PlayerConnections[target]=nil
-  end
-  report.MarkPlayersDirty()
- end
- function report.BuildPlayers()
-  local list,penSnapshot={},{}
-  if AssetRoster and type(AssetRoster.ReadSnapshot)=="function" then
-   local ok,snapshot=pcall(AssetRoster.ReadSnapshot)
-   if ok then for _,owner in ipairs(snapshot)do penSnapshot[owner.OwnerUserId]=owner.Records end end
-  end
-  local ok,profile=pcall(Save.Peek)
-  if not ok then profile=nil end
-  for _,target in ipairs(Players:GetPlayers())do
-   local row={userId=tostring(target.UserId),name=target.Name,displayName=target.DisplayName}
-   if target==player then
-    if report.SpeedProjection and type(report.SpeedProjection.ReadProjected)=="function" then
-     local read,value=pcall(report.SpeedProjection.ReadProjected)
-     if read and type(value)=="number" then row.speedPower=value end
-    end
-    if row.speedPower==nil and type(profile)=="table" then row.speedPower=profile.SpeedPower end
-   end
-   if row.speedPower==nil then
-    local power=target:GetAttribute("SpeedPower")
-    if type(power)=="number" then row.speedPower=power end
-   end
-   if row.speedPower==nil then
-    local stats=target:FindFirstChild("leaderstats")
-    local value=stats and (stats:FindFirstChild("SpeedPower") or stats:FindFirstChild("Speed"))
-    if value and value:IsA("ValueBase") and type(value.Value)=="number" then row.speedPower=value.Value end
-   end
-   local pen=penSnapshot[target.UserId]
-   if pen then
-    local total,known=0,true
-    for _,asset in pairs(pen)do
-     if type(asset.MoneyPerSecond)=="number" then total+=asset.MoneyPerSecond else known=false end
-    end
-    if known then row.incomePerSecond=total;row.incomeSource="replicated-pen-roster" end
-   end
-   table.insert(list,row)
-  end
-  table.sort(list,function(a,b)return a.userId<b.userId end)
-  return {version=1,type="players.snapshot",moduleId="PlayerReporter",sessionId=report.SessionId,
-   placeId=tostring(game.PlaceId),jobId=game.JobId,reporterUserId=tostring(player.UserId),
-   revision=report.PlayerRevision+1,players=list}
- end
- function report.SendPlayers()
-  if not report.Ready or not report.Socket or game.JobId=="" then return false end
-  local message=report.BuildPlayers()
-  local encoded={}
-  for _,row in ipairs(message.players)do table.insert(encoded,HttpService:JSONEncode(row))end
-  local signature=table.concat(encoded,";")
-  if signature==report.LastPlayerFingerprint and not report.ForcePlayers then
-   report.PlayersDirty=false
-   return false
-  end
-  local header=table.clone(message);header.players=nil
-  local data=HttpService:JSONEncode(header):sub(1,-2)..',"players":['..table.concat(encoded,",")..']}'
-  local ok,err=pcall(function()report.Socket:Send(data)end)
-  if not ok then
-   report.Log("Envoi Players echoue : %s",tostring(err))
-   report.Disconnect();report.NextConnect=os.clock()+report.Backoff
-   return false
-  end
-  report.PlayerRevision=message.revision
-  report.LastPlayersSent=os.clock()
-  report.PlayersDirty=false
-  report.ForcePlayers=false
-  report.LastPlayerFingerprint=signature
-  return true
- end
-
+ -- Gameplay hints delegate observation to the shared Observer; no local snapshots.
+ function report.MarkDirty()if report.Observer then report.Observer.MarkEggsDirty()end end
+ function report.Reset()report.MarkDirty()end
+ function report.Revealed()report.MarkDirty();report.MarkSettingsDirty()end
  function report.Start()
   if not report.Enabled then return end
+  report.Observer=shared.__SEAObserverController
+  if not report.Observer or report.Observer.Destroyed then
+   local start,why=loadstring(game:HttpGet("https://raw.githubusercontent.com/cagnastylepay-png/SEA_V2/main/Scripts/Observer.lua"),"SEA_V2/Observer")
+   assert(start,why);report.Observer=start()
+  end
+  report.Observer.Configure(report.ClientKind,report.SessionId,report.Url,report.Token)
+  report.UnsubscribeObserver=report.Observer.Subscribe(report.Receive)
+  if Save and type(Save.Watch)=="function"then
+   for _,key in ipairs({"Index","EggInventory","Inventory","EquippedAssets"})do connect(Save.Watch(key),report.MarkSettingsDirty)end
+  end
   log("SERVER_CHANGE","Arrive sur le serveur %s",game.JobId)
   task.spawn(function()
-   local ok,target=pcall(function()return game:GetService("TeleportService"):GetTeleportSetting("OvoraRemoteArrival")end)
-   if not ok or type(target)~="table"or target.jobId~=game.JobId then return end
-   pcall(function()game:GetService("TeleportService"):SetTeleportSetting("OvoraRemoteArrival",nil)end)
-   local description=string.format("%s [Poids=%s kg; Revenu=%s/s]",tostring(target.name or target.uid),type(target.weightKg)=="number"and formatNumber(target.weightKg)or "inconnu",type(target.incomePerSecond)=="number"and formatNumber(target.incomePerSecond)or "inconnu")
-   log("SERVER_CHANGE","Arrive depuis %s pour %s",tostring(target.fromJobId),description)
-   local synced=pcall(EggState.SyncFieldEggs)
-   if destroyed then return end
-   if not synced then log("SERVER_CHANGE","Verification de la cible impossible : snapshot indisponible pour %s",description);return end
-   local read,record=pcall(EggState.ReadFieldEgg,target.uid)
-   if not read then log("SERVER_CHANGE","Verification de la cible impossible pour %s",description)
-   elseif not record then log("EGG_TRACK","Oeuf disparu a l'arrivee : %s Serveur=%s",description,game.JobId)
-   elseif record.CarrierUserId or record.State=="Carried"or record.State=="Claimed"then log("EGG_TRACK","Oeuf indisponible a l'arrivee : %s Etat=%s",description,tostring(record.State))
-   else log("EGG_TRACK","Oeuf toujours disponible a l'arrivee : %s",description)end
-  end)
-
-  task.spawn(function()
-   local ok,projection=pcall(function()return require(ReplicatedStorage.Client.SpeedPowerProjection)end)
-   if not destroyed and ok and type(projection)=="table" then
-    report.SpeedProjection=projection
-    if projection.Changed then connect(projection.Changed,report.MarkPlayersDirty)end
-    report.MarkPlayersDirty()
-   end
-  end)
-  report.Cycle=tostring(AreaEggCycle.ActivePeriodIndexAt(ServerClock.Now()))
-  for _,target in ipairs(Players:GetPlayers())do report.TrackPlayer(target)end
-  connect(Players.PlayerAdded,report.TrackPlayer)
-  connect(Players.PlayerRemoving,report.UntrackPlayer)
-  if AssetRoster and AssetRoster.SnapshotRefreshed then
-   connect(AssetRoster.SnapshotRefreshed,report.MarkPlayersDirty)
-   connect(AssetRoster.SnapshotRefreshed,report.MarkSettingsDirty)
-  end
-  if Save and type(Save.Watch)=="function" then
-   connect(Save.Watch("SpeedPower"),report.MarkPlayersDirty)
-   connect(Save.Watch("Index"),report.MarkSettingsDirty)
-   connect(Save.Watch("EggInventory"),report.MarkSettingsDirty)
-  end
-  if EggState.ResetCountdown then connect(EggState.ResetCountdown,report.Reset) end
-  if EggState.RarityRevealed then connect(EggState.RarityRevealed,report.Revealed) end
-  task.spawn(function()
    while not destroyed and report.Enabled do
-    local ok,err=pcall(function()
+    local ok,why=pcall(function()
+     report.SyncObserver()
      local state=tostring(report.AutomationActive())..":"..report.AutomationReason()
      if state~=report.LastAutomationState then report.LastAutomationState=state;report.MarkSettingsDirty()end
-     if report.Connecting and os.clock()-(report.ConnectingAt or 0)>65 then
-      report.Serial+=1
-      report.Connecting=false
-      report.NextConnect=os.clock()+report.Backoff
-      report.Log("Connexion sans reponse apres 65 s ; nouvel essai programme")
-     end
-     if report.Ready and report.PendingRevision and os.clock()-(report.PendingAt or 0)>20 then
-      report.Log("Accuse snapshot absent : reconnexion")
-      report.PendingRevision=nil
-      report.Disconnect()
-      report.NextConnect=os.clock()+report.Backoff
-     end
-     if report.Socket and not report.Ready and os.clock()>(report.HelloDeadline or math.huge) then
-      report.Log("Accuse de connexion absent : reconnexion")
-      report.Disconnect()
-      report.NextConnect=os.clock()+report.Backoff
-     end
-     if not report.Socket and not report.Connecting and os.clock()>=report.NextConnect then report.Connect() end
-     if report.Ready and os.clock()-report.LastPlayersSent>=1
-      and report.PlayersDirty then report.SendPlayers()end
-     if report.Ready and not report.Waiting and os.clock()>=report.Due
-      and report.Dirty and os.clock()-report.LastSent>=2 then report.SendSnapshot() end
     end)
-    if not ok then
-     report.Log("Reporting interrompu sur cette iteration : %s",tostring(err))
-     task.wait(5)
-    end
+    if not ok then report.Log("Observer bridge : %s",tostring(why))end
     task.wait(.5)
    end
    report.Disconnect()
-   for target in pairs(report.PlayerConnections)do report.UntrackPlayer(target)end
   end)
  end
 end -- reporting scope
+
 
 
 local function getRecordPosition(record)
@@ -5133,7 +4805,7 @@ log("SESSION", "Nouveau lancement %s", os.date("%Y-%m-%d %H:%M:%S"))
 loadSettings()
 if game.JobId~="" then visitedServers[game.JobId]=true end
 local gui = FusionModules.Reporting.Headless and Instance.new("Folder") or createInterface()
-if FusionModules.Reporting.ClientKind=="admin" then automaticMode=false;queuePaused=true end
+if FusionModules.Reporting.ClientKind=="admin" then automaticMode=true;queuePaused=false;stopAfterFlight=false end
 setStatus("Chargement des modules du jeu...")
 connect(player.CharacterRemoving, function()
 	stopAutomation("Personnage retire : redemarre depuis la zone sure")

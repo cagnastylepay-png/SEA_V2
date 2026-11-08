@@ -1,14 +1,12 @@
 -- Ovora observer: passive reporting only; no automatic teleportation.
-local O={Connections={},Destroyed=false,Ready=false,IdentityReady=false,EggDirty=true,PlayerDirty=true,
+if shared.__SEAObserverController and not shared.__SEAObserverController.Destroyed then return shared.__SEAObserverController end
+local O={Listeners={},SocketConnections={},ClientKind="observer",Serial=0,Connections={},Destroyed=false,Ready=false,IdentityReady=false,EggDirty=true,PlayerDirty=true,
  EggRevision=0,PlayerRevision=0,NextConnect=0,Backoff=2}
 local Players=game:GetService("Players")
 local Http=game:GetService("HttpService")
 local RS=game:GetService("ReplicatedStorage")
 local player=Players.LocalPlayer
 if not player then return end
-if shared.__AutoSAEController and type(shared.__AutoSAEController.Destroy)=="function" then
- pcall(shared.__AutoSAEController.Destroy)
-end
 function O.Status(status,good)
  O.LastStatus=status;O.Connected=good==true
 end
@@ -18,8 +16,11 @@ function O.Connect(signal,callback)
  if ok then table.insert(O.Connections,connection)end
 end
 function O.Disconnect()
+ O.Serial+=1;O.LastPolicy=nil
  O.Ready=false;O.IdentityReady=false;O.Connecting=false;O.EggAckRevision=nil
  local socket=O.Socket;O.Socket=nil
+ for _,connection in ipairs(O.SocketConnections)do pcall(function()connection:Disconnect()end)end
+ table.clear(O.SocketConnections)
  if socket then pcall(function()socket:Close()end)end
  O.NextConnect=os.clock()+O.Backoff;O.Backoff=math.min(60,O.Backoff*2)
  O.Status("Reconnexion",false)
@@ -27,10 +28,31 @@ end
 function O.Destroy()
  if O.Destroyed then return end
  O.Destroyed=true
+ if shared.__SEAObserverController==O then shared.__SEAObserverController=nil end
+ table.clear(O.Listeners)
+ O.Disconnect()
  for _,connection in ipairs(O.Connections)do pcall(function()connection:Disconnect()end)end
  if O.Socket then pcall(function()O.Socket:Close()end)end
 end
-shared.__AutoSAEController={Destroy=O.Destroy,Reporting=O}
+shared.__SEAObserverController=O
+function O.Subscribe(callback)
+ O.Listeners[callback]=true
+ return function()O.Listeners[callback]=nil end
+end
+function O.Configure(kind,owner,url,token)
+ assert(kind=="observer"or kind=="hub"or kind=="admin","Role invalide")
+ local changed=O.ClientKind~=kind or O.Url~=url or O.Token~=token
+ O.Owner=owner;O.ClientKind=kind;O.Url=url;O.Token=token
+ if changed then O.Disconnect();O.NextConnect=0 end
+end
+function O.Release(owner)
+ if O.Owner~=owner then return end
+ O.Configure("observer",nil,O.Url,O.Token)
+end
+function O.MarkEggsDirty()O.EggDirty=true end
+function O.SocketConnect(signal,callback)
+ local connection=signal:Connect(callback);table.insert(O.SocketConnections,connection)
+end
 local function module(path)
  local node=RS
  for part in path:gmatch("[^.]+")do node=node:WaitForChild(part,30);if not node then error("Module absent: "..path)end end
@@ -115,6 +137,13 @@ function O.Eggs()
     observationOnly=record.ObservationOnly==true,
     weightKg=metric(safe(O.Records.WeightKgForScale,record.AssetCategory,record.AssetScale)),
     incomePerSecond=metric(item and safe(O.Earnings.RatePerSecond,item))}
+   for _,key in ipairs({"AreaId","Zone","AssetScale","NestId","NestScale","AssetEyeColor","AssetColorSeed","AssetColorIndex","Version","DroppedAt","HasParasite","BaseMutation","AssetGender","AssetPersonality","EggSkin","OwnerUserId"})do
+    local map={AreaId="areaId",Zone="zone",AssetScale="assetScale",NestId="nestId",NestScale="nestScale",AssetEyeColor="eyeColor",AssetColorSeed="colorSeed",AssetColorIndex="colorIndex",Version="version",DroppedAt="droppedAt",HasParasite="hasParasite",BaseMutation="baseMutation",AssetGender="gender",AssetPersonality="personality",EggSkin="skin",OwnerUserId="ownerUserId"}
+    local value=record[key];if value~=nil then egg[map[key]]=(key=="AreaId"or key=="Zone")and tostring(value)or value end
+   end
+   if type(record.Mutations)=="table"and#record.Mutations>0 then egg.mutations=table.clone(record.Mutations)end
+   if typeof(record.BottomCFrame)=="CFrame"then local p=record.BottomCFrame.Position;egg.position={x=p.X,y=p.Y,z=p.Z};egg.cframe={record.BottomCFrame:GetComponents()}end
+   if config.Egg then egg.icon=config.Egg.Icon end
    egg.sellValue=metric(safe(O.Records.SellPrice,record))
    if not egg.sellValue and item then
     item=table.clone(item);item.Mutations={};item.BaseMutation=nil
@@ -165,17 +194,18 @@ for _,name in ipairs({"FieldRefreshed","FieldShifted","FieldGone","RarityReveale
 function O.OpenSocket()
  if O.Connecting or O.Destroyed then return end
  O.Connecting=true;O.LastAck=os.clock()
+ local serial=O.Serial
  task.spawn(function()
   local success=pcall(function()
    local env=type(getgenv)=="function"and getgenv()or getfenv()
    local api=env.WebSocket or env.websocket or (env.syn and env.syn.websocket)
    local connector=api and (api.connect or api.Connect)
    if type(connector)~="function"then error("WebSocket indisponible")end
-   local socket=connector("wss://m4gix-ws.onrender.com/sae/ws")
-   if O.Destroyed then socket:Close();return end
+   local socket=connector(O.Url or"wss://m4gix-ws.onrender.com/sae/ws")
+   if O.Destroyed or O.Serial~=serial then socket:Close();return end
    O.Socket=socket
-   O.Connect(socket.OnClose,function()if O.Socket==socket then O.Disconnect()end end)
-   O.Connect(socket.OnMessage,function(raw)
+   O.SocketConnect(socket.OnClose,function()if O.Socket==socket then O.Disconnect()end end)
+   O.SocketConnect(socket.OnMessage,function(raw)
     if O.Destroyed or O.Socket~=socket then return end
     local decoded,message=pcall(Http.JSONDecode,Http,raw)
     if not decoded or type(message)~="table"or message.version~=1 then return end
@@ -188,12 +218,13 @@ function O.OpenSocket()
      if message.accepted==true and message.sessionId==O.Session and message.revision==O.EggRevision then
       O.EggAckRevision=message.revision;O.Status("Observation transmise",true)
      end
-    elseif message.type=="error"then O.Disconnect()
+    elseif message.type=="reporting.policy"then O.LastPolicy=message
     end
+    for callback in pairs(O.Listeners)do local handled,why=pcall(callback,message);if not handled then warn("[Observer] Client callback : "..tostring(why))end end
    end)
-   O.Send({version=1,type="hello",role="reporter",reporterUserId=tostring(player.UserId),observerOnly=true})
+   O.Send({version=1,type="hello",role="reporter",reporterUserId=tostring(player.UserId),observerOnly=O.ClientKind=="observer",clientKind=O.ClientKind,token=O.Token})
   end)
-  if not success then O.Disconnect()end
+  if not success and O.Serial==serial then O.Disconnect()end
  end)
 end
 O.Refresh()

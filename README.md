@@ -2,13 +2,13 @@
 
 ## Scripts
 
-- `Scripts/Observer.lua`: passive observer based on Sae/TestV2.lua. No GUI, icon, automatic teleportation or remote code execution. Reports egg snapshots and changes, players, speed and income to the existing Render WebSocket protocol.
-- `Scripts/Hub.lua`: based on Sae/Test.lua; sends only FLIGHT_RESULT logs to Render.
-- `Scripts/Admin.lua`: background Admin bootstrap. Reuses the Hub game engine without constructing its interface, starts AUTO OFF and loads the typed `AdminRuntime.lua` bridge.
+- `Scripts/Observer.lua`: passive observer based on Sae/TestV2.lua. No GUI, icon, automatic teleportation or remote code execution. Owns egg/player collection, metadata, event subscriptions, snapshots and the shared WebSocket. Reports egg/player changes and remains passive.
+- `Scripts/Hub.lua`: based on Sae/Test.lua; gameplay engine only, with control/settings/FLIGHT_RESULT reporting over Observer’s shared connection. No egg/player snapshot implementation remains in Hub.
+- `Scripts/Admin.lua`: background Admin bootstrap. Reuses the Hub game engine without constructing its interface, starts AUTO ON and loads the typed `AdminRuntime.lua` bridge.
 
 `Loaders/Observer.lua`, `Loaders/Hub.lua` and `Loaders/Admin.lua` load the corresponding scripts from this repository.
 
-Observer, Hub and Admin replace the previous engine on the same client. Run only the loader for the desired role. Admin creates no ScreenGui, icon or Roblox controls.
+Hub and Admin automatically start/reuse the singleton Observer. Observer has its own lifecycle and never destroys the game engine. Hub/Admin replace only the previous game engine, subscribe to Observer messages and share its one WebSocket. Closing a Hub/Admin releases the observer to passive mode. Admin creates no ScreenGui, icon or Roblox controls.
 
 ## Logging policy for current and future scripts
 
@@ -29,3 +29,7 @@ Metrics use Save.Money, SpeedPowerProjection.ReadProjected, AssetItems.ProfileIn
 Opening, selling, placing, fusing three selected backpack animals, and equipping best use the game APIs. Stop AUTO before manual inventory operations. Placement requires being in your plot; fusion uses normal pathfinding to reach the machine. Server refusals and uncertain results are surfaced without automatic retries. A shared action lock prevents overlapping operations across script reloads. Mutation is a disabled TODO.
 
 Parameter changes use the same toggles/ranges as Hub, validate both on Render and in Lua and persist via the existing settings mechanism. The global AUTO switch is reported separately from teleport eligibility. No arbitrary Lua command is accepted. End-to-end gameplay requires launching Admin.lua on the configured account; syntax, mock runtime, transport and UI tests do not imply a live sale/fusion occurred.
+
+Observer.Configure binds the shared transport to the active hub/admin role without adding game actions to Observer. Role ownership prevents an old controller from resetting a newer session; reconnect serials discard stale connections. Admin.lua starts Observer explicitly and Hub reuses it. Loaders are unchanged.
+
+Cards in Admin reuse Servers artwork/rarity/metric layout without roster, GO, server-egg expansion or detail sections. Mutations are shown above item names in both tabs and omitted when absent.

@@ -48,9 +48,12 @@ return function(ctx)
  local function row(uid,item,location,isEgg,record)
   local category=isEgg and record.AssetCategory or item.Category
   local config=A.Assets.Directory[category]or{}
+  local rarity=config.Rarity
+  if type(rarity)=="table"then rarity=rarity._id or rarity.Id or rarity.Name end
   local seconds,grown
   if isEgg and location=="plot"then seconds,grown=ctx.Countdown(record)end
-  return {uid=uid,category=category,name=config.DisplayName or category,location=location,
+  return {uid=uid,category=category,name=config.DisplayName or category,rarity=tostring(rarity or"Unknown"),location=location,
+   mutations=type(item.Mutations)=="table"and#item.Mutations>0 and table.clone(item.Mutations)or nil,baseMutation=record and record.BaseMutation or item.BaseMutation,
    incomePerSecond=metric(safe(A.Earnings.RatePerSecond,item)),weightKg=metric(safe(A.Items.WeightKg,item)),
    sellValue=metric(isEgg and safe(A.EggRecords.SellPrice,record)or safe(A.Items.SalePrice,item)),
    remainingSeconds=seconds,ready=grown==true,locked=record and record.Locked==true or false}
