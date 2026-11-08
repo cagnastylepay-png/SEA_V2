@@ -835,6 +835,8 @@ do
   if type(options.Url)=="string" and options.Url:match("^wss://") then report.Url=options.Url end
   report.Token=type(options.Token)=="string" and options.Token or nil
  end
+ report.ClientKind=type(options)=="table" and options.ClientKind=="admin" and "admin" or "hub"
+ report.Headless=type(options)=="table" and options.Headless==true
  report.SessionId=HttpService:GenerateGUID(false)
  function report.AutomationActive()
   return ready and automaticMode and (FusionModules.Options.AutoEggs or FusionModules.Options.AutoIndex) and not queuePaused and not stopAfterFlight and not destroyed and not serverHopPending
@@ -1094,7 +1096,7 @@ do
       report.Log("Accuse Cycle=%s Revision=%s Accepte=%s",tostring(message.cycleId),tostring(message.revision),tostring(message.accepted))
      elseif message.type=="reporting.policy" then
       report.PolicyKnown=true
-      report.TeleportAllowed=message.sendTeleport==true and message.favorite==true
+      report.TeleportAllowed=message.sendTeleport==true and message.admin==true
       if not report.TeleportAllowed and FusionModules.RemoteHop then FusionModules.RemoteHop.Pending=nil end
       report.LogsAllowed=message.sendLogs==true
       if report.SettingsAllowed~= (message.sendSettings==true)then
@@ -1127,7 +1129,7 @@ do
      report.NextConnect=os.clock()+report.Backoff
      report.Backoff=math.min(report.Backoff*2,60)
     end))
-    socket:Send(HttpService:JSONEncode({version=1,type="hello",role="reporter",reporterUserId=tostring(player.UserId),token=report.Token}))
+    socket:Send(HttpService:JSONEncode({version=1,type="hello",role="reporter",clientKind=report.ClientKind,reporterUserId=tostring(player.UserId),token=report.Token}))
    end)
    if not bound then
     report.Log("Initialisation socket echouee : %s",tostring(err))
@@ -3839,10 +3841,8 @@ function FusionModules.Helpers.prepareServerContinuation()
 		if type(synApi) == "table" and type(synApi.queue_on_teleport) == "function" then queue = synApi.queue_on_teleport end
 	end
 	if not queue then return false, "Relancement automatique indisponible : queue_on_teleport absent" end
-	local ok, reason = pcall(queue, [[
-		if not game:IsLoaded() then game.Loaded:Wait() end
-		loadstring(game:HttpGet("https://raw.githubusercontent.com/cagnastylepay-png/Sae/main/Test.lua"))()
-	]])
+	local loader = FusionModules.Reporting.ClientKind == "admin" and "Admin" or "Hub"
+	local ok, reason = pcall(queue, "if not game:IsLoaded() then game.Loaded:Wait() end loadstring(game:HttpGet(" .. string.format("%q", "https://raw.githubusercontent.com/cagnastylepay-png/SEA_V2/main/Loaders/" .. loader .. ".lua") .. "))()")
 	if ok then continuationPrepared=true end
 	return ok,reason
 end
@@ -4253,7 +4253,7 @@ local function createInterface()
 		if child then child:Clone().Parent = gui end
 	end
 	gui.ResetOnSpawn = false
-	gui.Enabled = true
+	gui.Enabled = not FusionModules.Reporting.Headless
 	gui.DisplayOrder = 10000
 	for _, descendant in ipairs(gui:GetDescendants()) do
 		if descendant:IsA("BaseScript") then descendant:Destroy() end
@@ -5154,7 +5154,18 @@ local previous = shared.__AutoSAEController
 if previous and type(previous.Destroy) == "function" then
 	pcall(previous.Destroy)
 end
-shared.__AutoSAEController = {Destroy = destroy, Gui = gui, Reporting = FusionModules.Reporting}
+shared.__AutoSAEController = {Destroy = destroy, Gui = gui, Reporting = FusionModules.Reporting,
+ SetEnabled = function(enabled)
+  if destroyed then return false end
+  automaticMode=enabled==true
+  if automaticMode then
+   queuePaused=false;stopAfterFlight=false
+   if ready then safeHome=getStartAreaDestination();syncQueue();wakeQueue() end
+  else requestUserStop("Admin OFF") end
+  FusionModules.Reporting.MarkSettingsDirty()
+  return automaticMode
+ end
+}
 connect(gui.Destroying, destroy)
 connect(script.Destroying, destroy)
 task.spawn(function()
