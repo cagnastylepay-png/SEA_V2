@@ -891,7 +891,7 @@ do
    local options=table.clone(FusionModules.Options)
    report.SettingsDirty=false
    report.SettingsPending=revision
-   local ok=pcall(function()report.Socket:Send(HttpService:JSONEncode({version=1,type="settings.snapshot",sessionId=report.SessionId,revision=revision,options=options,automationActive=report.AutomationActive(),automationReason=report.AutomationReason(),visitedJobIds=report.VisitedJobs(),missingCategories=report.MissingCategories()}))end)
+   local ok=pcall(function()report.Socket:Send(HttpService:JSONEncode({version=1,type="settings.snapshot",sessionId=report.SessionId,revision=revision,options=options,automationActive=report.AutomationActive(),automationEnabled=automaticMode and not queuePaused and not stopAfterFlight and not destroyed,automationReason=report.AutomationReason(),visitedJobIds=report.VisitedJobs(),missingCategories=report.MissingCategories()}))end)
    if not ok then report.SettingsDirty=true end
    task.delay(5,function()
     if destroyed or report.Serial~=serial or report.SettingsPending~=revision or not report.SettingsAllowed then return end
@@ -1105,6 +1105,8 @@ do
       end
       if not report.LogsAllowed then table.clear(executorTools.RemoteLogQueue)else report.ScheduleLogs()end
       if FusionModules.RefreshParams then FusionModules.RefreshParams()end
+     elseif message.type=="admin.command" then
+      if report.ClientKind=="admin" and report.SettingsAllowed and report.AdminReceive then report.AdminReceive(message)end
      elseif message.type=="teleport.request" then
       if FusionModules.RemoteHop then FusionModules.RemoteHop.Receive(message)end
      elseif message.type=="settings.ack" and message.sessionId==report.SessionId then
@@ -5130,7 +5132,8 @@ end)()
 log("SESSION", "Nouveau lancement %s", os.date("%Y-%m-%d %H:%M:%S"))
 loadSettings()
 if game.JobId~="" then visitedServers[game.JobId]=true end
-local gui = createInterface()
+local gui = FusionModules.Reporting.Headless and Instance.new("Folder") or createInterface()
+if FusionModules.Reporting.ClientKind=="admin" then automaticMode=false;queuePaused=true end
 setStatus("Chargement des modules du jeu...")
 connect(player.CharacterRemoving, function()
 	stopAutomation("Personnage retire : redemarre depuis la zone sure")
@@ -5141,6 +5144,7 @@ local function destroy()
 	executorTools.SaveSettings()
 	executorTools.SaveLog()
 	destroyed = true
+    if FusionModules.AdminRuntime then FusionModules.AdminRuntime.Destroy()end
     FusionModules.Reporting.Disconnect()
 	for _, connection in ipairs(lifetimeConnections) do connection:Disconnect() end
 	table.clear(lifetimeConnections)
@@ -5155,6 +5159,21 @@ if previous and type(previous.Destroy) == "function" then
 	pcall(previous.Destroy)
 end
 shared.__AutoSAEController = {Destroy = destroy, Gui = gui, Reporting = FusionModules.Reporting,
+ AdminContext = FusionModules.Reporting.ClientKind=="admin" and {
+  Report=FusionModules.Reporting,
+  SetRuntime=function(runtime)FusionModules.AdminRuntime=runtime end,
+  Ready=function()return ready and not destroyed end,
+  Busy=function()return destroyed or autoEnabled or currentCycle~=nil or inventoryPlacementBusy or placementRequest~=nil or hatchInProgress or FusionModules.Pending() or serverHopPending end,
+  Countdown=FusionModules.Helpers.PlotEggCountdown, FindSpot=findPlotEggSpot, AcknowledgeReward=FusionModules.AcknowledgeReward,
+  SetEnabled=function(value)return shared.__AutoSAEController.SetEnabled(value)end,
+  SetOptions=function(options)
+   local was=automaticMode
+   if not FusionModules.Helpers.RestoreOptions(options)then return false end
+   automaticMode=was;FusionModules.Reporting.MarkSettingsDirty();wallMaintenancePending=true
+   if ready and automaticMode then syncQueue();wakeQueue()end
+   executorTools.SaveSettings();return true
+  end,
+ }or nil,
  SetEnabled = function(enabled)
   if destroyed then return false end
   automaticMode=enabled==true
