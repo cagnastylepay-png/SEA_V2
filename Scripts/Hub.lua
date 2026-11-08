@@ -47,6 +47,7 @@ local CONFIG = {
 	FailedTargetCooldown = 10,
 	RecoveryStateTimeout = 30,
 	RecoveryRetryDelay = 0.5,
+	ArrivalTargetTimeout = 20,
 }
 local MINIMUM_BILLIONS, MAXIMUM_BILLIONS, DEFAULT_BILLIONS = 0, 1e24, 2
 local SLOT_STATE = "Slot"
@@ -2158,6 +2159,44 @@ syncQueue = function()
 	if refreshQueueInterface then refreshQueueInterface() end
 end
 
+-- Retain the exact remote target while the destination client's field/profile replicate.
+FusionModules.Arrival={}
+function FusionModules.Arrival.Clear(reason)
+ local arrival=FusionModules.Arrival
+ if not arrival.Uid then return end
+ log("ARRIVAL_TARGET","UID=%s : %s",arrival.Uid,tostring(reason))
+ arrival.Uid=nil;arrival.Deadline=nil
+ pcall(function()game:GetService("TeleportService"):SetTeleportSetting("OvoraRemoteArrival",nil)end)
+end
+function FusionModules.Arrival.Load()
+ local ok,saved=pcall(function()return game:GetService("TeleportService"):GetTeleportSetting("OvoraRemoteArrival")end)
+ if not ok or type(saved)~="table"or saved.clientKind~=FusionModules.Reporting.ClientKind
+  or saved.jobId~=game.JobId or saved.reporterUserId~=tostring(player.UserId)
+  or type(saved.uid)~="string"or saved.uid==""or #saved.uid>128
+  or type(saved.expiresAt)~="number"or saved.expiresAt~=saved.expiresAt
+  or saved.expiresAt<=os.time()or saved.expiresAt>os.time()+300 then return end
+ FusionModules.Arrival.Uid=saved.uid
+ FusionModules.Arrival.Deadline=os.clock()+math.min(CONFIG.ArrivalTargetTimeout,saved.expiresAt-os.time())
+end
+function FusionModules.Arrival.Waiting()
+ local arrival=FusionModules.Arrival
+ if not arrival.Uid then return false end
+ if destroyed or not automaticMode then arrival.Clear("AUTO inactif");return false end
+ if os.clock()>=arrival.Deadline then arrival.Clear("Delai de chargement termine");return false end
+ if ownsEgg(arrival.Uid)then arrival.Clear("Oeuf deja possede");return false end
+ local record,ok=readField(arrival.Uid)
+ if ok and record and not record.ObservationOnly then
+  if not isTrackedFieldState(record)or isHeldByOther(record)then arrival.Clear("Cible indisponible");return false end
+  if queuedEggs[arrival.Uid]and(getRatePerSecond(record)~=nil or FusionModules.Helpers.IsAlwaysEligibleRarity(record))then return false end
+  local profileOK,profile=pcall(Save.Peek)
+  if profileOK and type(profile)=="table"and type(profile.Index)=="table"and getRatePerSecond(record)~=nil then
+   arrival.Clear("Cible non eligible selon les options actuelles");return false
+  end
+ end
+ return true
+end
+FusionModules.Arrival.Load()
+
 local function selectBest()
 	local best, bestRate = nil, -math.huge
     local bestPriority
@@ -2171,6 +2210,7 @@ local function selectBest()
 				local rate = getRatePerSecond(latest)
 				if rate == nil and FusionModules.Helpers.IsAlwaysEligibleRarity(latest) then rate = 0 end
 				if rate then
+					if uid==FusionModules.Arrival.Uid then return latest,rate end
 					local priority={Uid=uid,Rate=rate,Distance=FusionModules.Helpers.QueueDistance(latest,root and root.Position)}
                     if not bestPriority or FusionModules.Helpers.QueueBefore(priority,bestPriority)then
                      best,bestRate,bestPriority=latest,rate,priority
@@ -2296,6 +2336,7 @@ end
 FusionModules.SpawnPriorityUntil=0
 function FusionModules.YieldToSpawnedEggs()
  if destroyed or not ready or not automaticMode or not autoEnabled then return false end
+ if FusionModules.Arrival.Waiting()then wallMaintenancePending=true;return true end
  if os.clock()<FusionModules.SpawnPriorityUntil then
   wallMaintenancePending=true
   return true
@@ -3162,6 +3203,12 @@ local function worker(token)
 	local directNext = false
 	while autoEnabled and generation == token and not destroyed do
         syncQueue()
+		if FusionModules.Arrival.Waiting()then
+			autoActivity="ARRIVAL_WAIT"
+			setStatus("Arrivee : chargement de l'oeuf cible avant le vol...")
+			task.wait(CONFIG.ScanInterval)
+			continue
+		end
 		serviceWallMaintenance(token)
   if not FusionModules.Helpers.ShouldRun()and not currentCycle then requestUserStop("Toutes les options sont OFF");return end
 		if activityRecheckPending then
@@ -3201,6 +3248,7 @@ local function worker(token)
 			selected, rate = selectBest()
 		end
 		if selected then
+			if selected.Uid==FusionModules.Arrival.Uid then FusionModules.Arrival.Clear("Debut du vol de la cible")end
 			searchWaitForEgg = false
 			serverSearchState = automaticMode and "Oeuf eligible : collecte" or "OFF"
             FusionModules.BatCombat.ApproachUid=not recovering and selected.Uid or nil
@@ -3328,7 +3376,7 @@ wakeQueue = function()
  end
  if os.clock() < (FusionModules.QueueResumeAt or 0) then return end
  if not FusionModules.Helpers.ShouldRun()then return end
-	if FusionModules.Pending() or inventoryPlacementBusy or placementRequest or serverHopPending or destroyed or not ready or autoEnabled or queuePaused or (not automaticMode and next(queuedEggs) == nil) then return end
+ if FusionModules.ManualBusy or FusionModules.MutationBusy or FusionModules.Pending() or inventoryPlacementBusy or placementRequest or serverHopPending or destroyed or not ready or autoEnabled or queuePaused or (not automaticMode and next(queuedEggs) == nil) then return end
 	if inFlightRequest and not inFlightRequest.done then return end
 	startAutomation(minimumRatePerSecond / 1e9)
 end
@@ -4801,8 +4849,6 @@ local launcherScale=mainCard:FindFirstChild("ResolutionScale")or Instance.new("U
 		if elapsed >= 0.75 then
 			elapsed = 0
 			if ready and not destroyed then
-				syncQueue()
-				wakeQueue()
 				if refreshBestEggCard then refreshBestEggCard() end
 				if frame.Visible then refreshEggInterface() end
 			end
@@ -4811,6 +4857,17 @@ local launcherScale=mainCard:FindFirstChild("ResolutionScale")or Instance.new("U
 	show(false)
 	log("UI_READY", "Interface autonome creee avec carte meilleur oeuf deplacable.")
 	return gui
+end
+
+-- Gameplay polling belongs to the engine, including headless Admin, not the GUI.
+do
+ local elapsed=0
+ connect(RunService.Heartbeat,function(dt)
+  elapsed+=dt
+  if elapsed<CONFIG.ScanInterval then return end
+  elapsed=0
+  if ready and not destroyed then syncQueue();wakeQueue()end
+ end)
 end
 
 -- Repeat return jumps after landing, without overriding the game's speed.
