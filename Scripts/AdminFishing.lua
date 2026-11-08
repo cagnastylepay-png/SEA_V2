@@ -22,6 +22,18 @@ return function(ctx)
   local gui=ui();local node=gui and gui:FindFirstChild(name)
   return gui and gui.Enabled and node and node.Visible or false
  end
+ function F.ChargeFromTag(track,tag)
+  local top=track:GetAttribute("WindowTop");top=type(top)=="number"and top or 0
+  local bottom=track:GetAttribute("WindowBottom");bottom=type(bottom)=="number"and bottom or 1
+  local span=track.Size.Y.Scale*(bottom-top);if span<=0 then return nil end
+  local start=track.Position.Y.Scale-track.AnchorPoint.Y*track.Size.Y.Scale+track.Size.Y.Scale*top
+  return math.clamp(1-(tag.Position.Y.Scale-start)/span,0,1)
+ end
+ function F.ReadCharge()
+  local gui=ui();local charge=gui and gui:FindFirstChild("Charge")
+  local track=charge and charge:FindFirstChild("Track");local tag=charge and charge:FindFirstChild("Tag")
+  return track and tag and F.ChargeFromTag(track,tag)or nil
+ end
  local function parts()
   local char=player.Character
   return char,char and char:FindFirstChildOfClass("Humanoid"),char and char:FindFirstChild("HumanoidRootPart")
@@ -31,7 +43,7 @@ return function(ctx)
   local tool=F.Tool;F.Tool=nil
   local char,humanoid=parts()
   if tool and tool.Parent==char and humanoid then pcall(function()humanoid:UnequipTools()end)end
-  if tool then pcall(function()tool:Deactivate()end)end
+  if tool and tool.Parent~=char then pcall(function()tool:Deactivate()end)end
   if F.Camera and world.CurrentCamera==F.Camera and F.CameraFrame then F.Camera.CFrame=F.CameraFrame end
   F.Camera=nil;F.CameraFrame=nil
  end
@@ -130,11 +142,10 @@ return function(ctx)
    assert(waterAt(char,fishing.Aim(root.Position,aim(char,root),charge)),"Visee hors de l'eau : aucun lancer")
    assert(tool.Parent==char and fishing.EquippedRod(char)==tool and valid(token,char),"Canne desequipee avant lancer")
    ctx.Status("PECHE : charge Perfect")
-   local started=os.clock();tool:Activate()
+   tool:Activate()
    assert(await(token,char,1,function()return visible("Charge")end),"Charge non confirmee par le jeu")
-   local target=F.PerfectSeconds(flags.ChargeSeconds:Get(),flags.PerfectMin:Get(),flags.PerfectMax:Get())
-   assert(await(token,char,target+1,function()return os.clock()-started>=target end),"Charge interrompue")
-   assert(fishing.IsPerfect(fishing.ChargeAt(os.clock()-started)),"Fenetre Perfect manquee : lancer annule")
+   local target=(flags.PerfectMin:Get()+flags.PerfectMax:Get())/2
+   assert(await(token,char,flags.ChargeSeconds:Get()*2+1,function()local value=F.ReadCharge();return value and value>=target and fishing.IsPerfect(value)end),"Jauge Perfect non confirmee : lancer annule")
    tool:Deactivate()
    ctx.Status("PECHE : attente de la touche")
    -- Never click during Waiting: the native controller would cancel the cast.

@@ -20,6 +20,10 @@ return function(source)
  local f=chunk()({CanFish=function()return can end})
  assert(math.abs(f.PerfectSeconds(1.2,.8,.95)-1.0908334)<.00001)
  assert(not pcall(f.PerfectSeconds,1.2,.95,.8))
+ local track={Size={Y={Scale=.8}},Position={Y={Scale=.1}},AnchorPoint={Y=0},GetAttribute=function(_,name)return name=="WindowTop"and .1 or .9 end}
+ local tag={Position={Y={Scale=.26}}}
+ assert(math.abs(f.ChargeFromTag(track,tag)-.875)<.00001,"read native gauge with window offsets")
+ track.Size.Y.Scale=0;assert(f.ChargeFromTag(track,tag)==nil,"missing gauge cannot trigger release")
  assert(f.Equip(1)==tool and equips==1,"first cast equips rod")
  f.Cancel();assert(deactivations==1 and tool.Parent==bag)
  f.Cancelled=false
