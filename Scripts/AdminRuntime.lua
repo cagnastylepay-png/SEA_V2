@@ -45,14 +45,15 @@ return function(ctx)
   local saved=profile().Inventory and profile().Inventory[uid]
   return saved and A.Items.Decode(saved),saved
  end
- local mutationIds={"Boss","Scrambled","Enchanted","Nitro","Spectral"}
+ local mutationIds={"Boss","Scrambled","Enchanted","Nitro","Spectral","Musical","Alien","DarkMatter"}
  local waitUntil
  local function hasMutation(record,id)return record.BaseMutation==id or table.find(record.Mutations or{},id)~=nil end
  local function mutationTools()
-  local rows={};for _,id in ipairs(mutationIds)do rows[id]={id=id,count=0,tools={}}end
+  local rows={};local seen={};for _,id in ipairs(mutationIds)do rows[id]={id=id,count=0,tools={}}end
   for _,container in pairs({player:FindFirstChild("Backpack"),player.Character})do
    if container then for _,tool in ipairs(container:GetChildren())do
-    if tool:IsA("Tool")and tool:GetAttribute("ItemType")=="MutationConsumable"then
+    if not seen[tool]and tool:IsA("Tool")and tool:GetAttribute("ItemType")=="MutationConsumable"then
+     seen[tool]=true
      local id=tool:GetAttribute("MutationId")or"Boss";local r=rows[id];local uses=metric(tool:GetAttribute("Uses"))
      if r and uses and uses>=1 then r.count+=math.floor(uses);table.insert(r.tools,tool)end
     end
@@ -402,7 +403,7 @@ return function(ctx)
    A.Speed=module("Client.SpeedPowerProjection");A.Remotes=module("Shared.Remotes");A.Renderer=module("Shared.Eggs.PlacedEggRenderer")
    A.Kernel=module("Shared.Util.FuseKernel");A.Signals=module("Client.FuseMachineSignals");A.FuseTypes=module("Shared.Types.FuseMachine")
    A.MutationCatalog=module("Shared.Modules.Mutations.Catalog");A.MutationFlags={}
-   for id,spec in pairs({Boss={"Shared.Flags.BossMasteryFlags","MutationConsumableSuccessPercent"},Scrambled={"Shared.Flags.ScrambleMutationFlags","SuccessPercent"},Nitro={"Shared.Flags.RaceRallyFlags","NitroSuccessPercent"},Spectral={"Shared.Flags.TrainEventFlags","SpectralSuccessPercent"}})do
+   for id,spec in pairs({Boss={"Shared.Flags.BossMasteryFlags","MutationConsumableSuccessPercent"},Scrambled={"Shared.Flags.ScrambleMutationFlags","SuccessPercent"},Nitro={"Shared.Flags.RaceRallyFlags","NitroSuccessPercent"},Spectral={"Shared.Flags.TrainEventFlags","SpectralSuccessPercent"},Musical={"Shared.Flags.BossMasteryFlags","MusicalMutationSuccessPercent"},Alien={"Shared.Flags.UFOSightingsFlags","AlienMutationSuccessPercent"},DarkMatter={"Shared.Flags.AlienLagoonFlags","DarkMatterMutationSuccessPercent"}})do
     local flags=safe(module,spec[1]);A.MutationFlags[id]=flags and flags[spec[2]]
    end
    A.Initialized=true

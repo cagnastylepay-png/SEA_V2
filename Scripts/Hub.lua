@@ -99,7 +99,7 @@ FusionModules.Options.AutoMutations=false
 FusionModules.Options.AutoSellAnimals=false
 FusionModules.Options.AutoSellAnimalsMin=0
 FusionModules.Options.AutoSellAnimalsMax=2e9
-for _,id in ipairs({"Boss","Scrambled","Enchanted","Nitro","Spectral"})do
+for _,id in ipairs({"Boss","Scrambled","Enchanted","Nitro","Spectral","Musical","Alien","DarkMatter"})do
  FusionModules.Options["Mutation"..id.."Enabled"]=false
  FusionModules.Options["Mutation"..id.."Min"]=0
  FusionModules.Options["Mutation"..id.."Attempts"]=1
@@ -136,7 +136,7 @@ function FusionModules.Helpers.RestoreOptions(saved)
  end
  if candidate.AutoEggsMin>candidate.AutoEggsMax or candidate.AutoSellMin>candidate.AutoSellMax or candidate.AutoOpenMin>candidate.AutoOpenMax or candidate.AutoPlaceMin>candidate.AutoPlaceMax or candidate.AutoFuseMin>candidate.AutoFuseMax then return false end
  if candidate.AutoSellAnimalsMin>candidate.AutoSellAnimalsMax then return false end
- for _,id in ipairs({"Boss","Scrambled","Enchanted","Nitro","Spectral"})do local n=candidate["Mutation"..id.."Attempts"];if n%1~=0 or n<1 or n>100 then return false end end
+ for _,id in ipairs({"Boss","Scrambled","Enchanted","Nitro","Spectral","Musical","Alien","DarkMatter"})do local n=candidate["Mutation"..id.."Attempts"];if n%1~=0 or n<1 or n>100 then return false end end
  FusionModules.Options=candidate
  minimumRatePerSecond=candidate.AutoEggsMin;autoIncludeMissingIndex=candidate.AutoIndex;automaticMode=true
  return true

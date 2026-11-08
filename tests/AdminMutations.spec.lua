@@ -94,6 +94,27 @@ a.Assets={Directory={Viridian={DisplayName="Viridian Prowler",Icon="rbxassetid:/
 assert(a.Execute({action="images.collect"}));assert(#a.ImageCatalog==1)
 assert(a.ImageCatalog[1].name=="Viridian Prowler"and a.ImageCatalog[1].animalImageAssetId=="98765432101235"and a.ImageCatalog[1].eggImageAssetId=="98765432101234")
 
+-- Stock uses charges, includes equipped tools, and supports all current consumables.
+p.Inventory={};p.EggInventory={};p.EquippedAssets={}
+a.EggState={ReadOwnerEggs=function()return{}end};a.Roster={ReadOwnerPen=function()return{}end}
+a.Constants={};a.Speed={};a.MutationCatalog={};a.MutationFlags={}
+local stockTools={}
+for _,id in ipairs({"Boss","Scrambled","Enchanted","Nitro","Spectral","Musical","Alien","DarkMatter"})do
+ local t={id=id,uses=3};function t:IsA(c)return c=="Tool"end
+ function t:GetAttribute(k)return k=="ItemType"and"MutationConsumable"or k=="MutationId"and self.id or k=="Uses"and self.uses or nil end
+ table.insert(stockTools,t)
+end
+backpack.GetChildren=function()return stockTools end
+-- A moving tool can appear in both reads; never count it twice.
+character.GetChildren=function()return{stockTools[6]}end
+local stock=a.Snapshot().mutationConsumables
+assert(#stock==8)
+for _,r in ipairs(stock)do assert(r.count==3,"charges counted once for "..r.id)end
+stockTools[6].uses=2;assert(a.Snapshot().mutationConsumables[6].count==2,"consumption refreshes count")
+backpack.GetChildren=function()return{}end
+assert(a.Snapshot().mutationConsumables[6].count==2,"equipped stock remains visible")
+assert(a.Snapshot().mutationConsumables[1].count==0,"zero stock remains explicit")
+
 return "Mutations, manual AUTO queue, backpack-only animal sale, image catalog mocks passed: strict threshold, 2-try cap, reload persistence, success stop, unknown-result block, AUTO off, exclusive lock. No real consumables used."
 
 
