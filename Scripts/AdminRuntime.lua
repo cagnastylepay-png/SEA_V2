@@ -183,7 +183,7 @@ return function(ctx)
   local income=metric(safe(A.Items.ProfileIncomePerSecond,player,p))
   local offline=A.Constants.OFFLINE_ASSETS or{}
   local duration,multiplier=metric(offline.MAX_DURATION_SECONDS),metric(offline.MONEY_RATE_MULTIPLIER)
-  return {eggs=eggs,animals=animals,mutationConsumables=mutationMetadata(),mutationStatus=A.MutationStatus,stats={money=metric(p.Money),speedPower=metric(safe(A.Speed.ReadProjected))or metric(p.SpeedPower),
+  return {eggs=eggs,animals=animals,automationStatus=ctx.GetStatus and tostring(ctx.GetStatus()):sub(1,500)or nil,mutationConsumables=mutationMetadata(),mutationStatus=A.MutationStatus,stats={money=metric(p.Money),speedPower=metric(safe(A.Speed.ReadProjected))or metric(p.SpeedPower),
    incomePerSecond=income,offlinePerDay=income and duration and multiplier and income*duration*multiplier,
    offlineDurationSeconds=duration,offlineRateMultiplier=multiplier}}
  end

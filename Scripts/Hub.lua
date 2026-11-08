@@ -2500,7 +2500,7 @@ local function findPlotEggSpot(plot, eggs, reserved)
 	return nil
 end
 
-local function placeInventoryEggs(selection, token, opened)
+local function placeInventoryEggsImpl(selection, token, opened)
  if token~=nil and not FusionModules.Options.AutoPlace then return 0,"AutoPlace OFF"end
 	if FusionModules.Pending() or inventoryPlacementBusy or placementRequest or currentCycle or serverHopPending or hatchInProgress then return 0, "Placement indisponible : action en cours" end
 	if not ready or destroyed or not PlotState or not inventoryEggRecords then return 0, "Modules indisponibles" end
@@ -2607,6 +2607,12 @@ local function placeInventoryEggs(selection, token, opened)
 		if refreshEggInterface then refreshEggInterface() end
 	end
 	return placed,summary
+end
+
+local function placeInventoryEggs(...)
+ local placed,reason=placeInventoryEggsImpl(...)
+ FusionModules.PlacementStatus=tostring(reason or"Placement termine")
+ return placed,reason
 end
 
 
@@ -2926,6 +2932,9 @@ local function serviceWallMaintenance(token)
 	if not root or isSafe(root.Position) ~= true then return end
 	wallMaintenancePending = false
 	lastMaintenanceAt = os.clock()
+	-- Fill available spots before mutation retries can defer the rest of maintenance.
+	placeInventoryEggs(nil,token,0)
+	if destroyed or not autoEnabled or generation~=token or queuePaused or placementRequest or FusionModules.YieldToSpawnedEggs() then return end
 	if FusionModules.Options.AutoMutations and FusionModules.Reporting.ClientKind=="admin" then
 	 if not FusionModules.AdminRuntime or not FusionModules.AdminRuntime.Initialized then return end
 	 local ok,pending=pcall(FusionModules.AdminRuntime.MutateNext)
@@ -4879,6 +4888,13 @@ shared.__AutoSAEController = {Destroy = destroy, Gui = gui, Reporting = FusionMo
   SetRuntime=function(runtime)FusionModules.AdminRuntime=runtime end,
   Ready=function()return ready and not destroyed end,
   GetOptions=function()return table.clone(FusionModules.Options)end,
+  GetStatus=function()
+   local reason=FusionModules.PlacementStatus or"Placement en attente de maintenance"
+   if not FusionModules.Options.AutoPlace then reason="Placement automatique OFF"
+   elseif currentCycle or next(queuedEggs)then reason="Placement en attente : collecte des oeufs prioritaire"
+   elseif placementRequest then reason="Placement en attente de confirmation serveur"end
+   return tostring(lastStatusText or autoActivity or"En attente").." · "..reason
+  end,
   MutationLock=function(value)FusionModules.MutationBusy=value==true end,
   CanMutate=function()return not destroyed and ready and automaticMode and autoEnabled and not queuePaused and not currentCycle and not serverHopPending and not FusionModules.Pending() and not inventoryPlacementBusy and not placementRequest and not hatchInProgress end,
   Busy=function()return destroyed or autoEnabled or currentCycle~=nil or inventoryPlacementBusy or placementRequest~=nil or hatchInProgress or FusionModules.Pending() or serverHopPending end,
