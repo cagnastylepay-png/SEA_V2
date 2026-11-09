@@ -211,11 +211,21 @@ return function(ctx)
    offlineDurationSeconds=duration,offlineRateMultiplier=multiplier}}
  end
  function A.Publish(force)
-  if not A.Initialized or not ctx.Ready()or not ctx.Report.SettingsAllowed then return end
+  if not A.Initialized or not ctx.Ready()or not ctx.Report.SettingsAllowed or not ctx.Report.Ready or not ctx.Report.Socket then return end
+  if A.SentSocket~=ctx.Report.Socket then A.SentAt=nil;A.Signature=nil end
+  -- Gameplay conditions use the local Save; bursts only queue the latest dashboard state.
+  local remaining=2-(os.clock()-(A.SentAt or -math.huge))
+  if remaining>0 then
+   if not A.SnapshotQueued then
+    A.SnapshotQueued=true
+    task.delay(remaining,function()A.SnapshotQueued=false;if not A.Destroyed then pcall(A.Publish,false)end end)
+   end
+   return false
+  end
   local data=A.Snapshot();local signature=Http:JSONEncode(data)
-  if not force and signature==A.Signature and os.clock()-(A.SentAt or 0)<20 then return end
+  if signature==A.Signature and os.clock()-(A.SentAt or 0)<20 then return false end
   local m=table.clone(data);m.version=1;m.type="admin.inventory.snapshot";m.sessionId=A.Session;m.revision=A.Revision+1
-  if send(m)then A.Revision=m.revision;A.Signature=signature;A.SentAt=os.clock()end
+  if send(m)then A.Revision=m.revision;A.Signature=signature;A.SentAt=os.clock();A.SentSocket=ctx.Report.Socket end
  end
  waitUntil=function(fn,seconds)
   local deadline=os.clock()+seconds
@@ -500,7 +510,7 @@ return function(ctx)
    for _,signal in ipairs({A.EggState.OwnerRefreshed,A.EggState.SnapshotRefreshed})do
     if signal then table.insert(A.Connections,signal:Connect(dirty))end
    end
-   if type(A.Save.Watch)=="function"then for _,key in ipairs({"EggInventory","Inventory","EquippedAssets","Money","BaseUpgradeLevel","TreadmillUpgradeLevel","Butterflies"})do local signal=A.Save.Watch(key);if signal then table.insert(A.Connections,signal:Connect(dirty))end end end
+   if type(A.Save.Watch)=="function"then for _,key in ipairs({"EggInventory","Inventory","EquippedAssets","BaseUpgradeLevel","TreadmillUpgradeLevel"})do local signal=A.Save.Watch(key);if signal then table.insert(A.Connections,signal:Connect(dirty))end end end
   end)
   if not ok then warn("[SEA Admin] "..tostring(why));return end
   while not A.Destroyed and ctx.Ready()do
