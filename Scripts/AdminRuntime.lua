@@ -298,12 +298,13 @@ return function(ctx)
   end
   assert(ok,reason);return true
  end
- -- Cash upgrades and butterfly crafting share one request slot across reloads.
+ -- Cash upgrades share one request slot across reloads.
  local progression=shared.__SEAProgressionState
  if type(progression)~="table"or progression.UserId~=player.UserId then
   progression={UserId=player.UserId,RetryAt={}};shared.__SEAProgressionState=progression
  end
  function A.ProgressPending()return progression.Pending~=nil end
+ function A.ProgressTravelling()return progression.Pending and progression.Pending.Moving==true or false end
  local function progressionNotice(text)
   if ctx.InventoryNotice then ctx.InventoryNotice(text)end
  end
@@ -313,79 +314,71 @@ return function(ctx)
    local node=RS;for name in path:gmatch("[^.]+")do node=node and node:FindFirstChild(name)end
    assert(node,"Module progression absent : "..path);return require(node)
   end
-  local modules={Base=find("Client.BaseUpgrade"),Treadmill=find("Controllers.GUI.TreadmillUpgradeController.Client"),Butterflies=find("Shared.Modules.ButterflyCatalog"),ButterflyFlags=find("Shared.Flags.ButterflyFlags")}
+  local modules={Base=find("Client.BaseUpgrade"),Treadmill=find("Controllers.GUI.TreadmillUpgradeController.Client")}
   A.ProgressModules=modules;return modules
  end
- local function progressNextImpl(craftOnly)
+ local function progressNextImpl()
   if A.Destroyed or not A.Initialized or A.Busy or shared.__SEAAdminRequestLock or progression.Pending or A.ManualPending or not ctx.CanProgression or not ctx.CanProgression()then return false end
+  if progression.Unknown and progression.Unknown.kind=="craft"then progression.Unknown=nil end
   if progression.Unknown then
    if safe(progression.Unknown.confirm)then progression.Unknown=nil
-   else progressionNotice("Upgrade/Craft incertain : attente de confirmation, aucun renvoi");return false end
+   else progressionNotice("Upgrade incertain : attente de confirmation, aucun renvoi");return false end
   end
   local options=ctx.GetOptions()
-  if not options.AutoPapillon and(craftOnly or not options.AutoPlotUpgrade and not options.AutoTreadmillUpgrade)then return false end
+  if not options.AutoPlotUpgrade and not options.AutoTreadmillUpgrade then return false end
   if os.clock()<(A.ProgressModuleRetryAt or 0)then return false end
   local ok,mods=pcall(progressionModules)
   if not ok then A.ProgressModuleRetryAt=os.clock()+30;progressionNotice(tostring(mods));return false end
   if mods.Base.Transition and mods.Base.Transition.IsPlaying()then return false end
   local p=profile();local kind,dispatch,confirm
   local function ready(id)return os.clock()>=(progression.RetryAt[id]or 0)end
-  if not craftOnly and options.AutoPlotUpgrade and ready("plot")and mods.Base.IsNextTierAffordable(p)then
+  if options.AutoPlotUpgrade and ready("plot")and mods.Base.IsNextTierAffordable(p)then
    local before=p.BaseUpgradeLevel
    kind="plot";dispatch=mods.Base.PurchaseNextTier
    confirm=function()return profile().BaseUpgradeLevel>before end
-  elseif not craftOnly and options.AutoTreadmillUpgrade and ready("treadmill")and(p.BaseUpgradeLevel or 0)>0 and mods.Treadmill.CanAffordNext(p)then
+  elseif options.AutoTreadmillUpgrade and ready("treadmill")and(p.BaseUpgradeLevel or 0)>0 and mods.Treadmill.CanAffordNext(p)then
    local before=p.TreadmillUpgradeLevel
    kind="treadmill";dispatch=mods.Treadmill.RequestCashUpgrade
    confirm=function()return profile().TreadmillUpgradeLevel>before end
-  elseif options.AutoPapillon and ready("craft")and mods.ButterflyFlags.Enabled:Get()then
-   local counts=p.Butterflies and p.Butterflies.Counts
-   local recipe=mods.Butterflies.EssenceRecipe();local enough=type(counts)=="table";local total=0
-   for _,id in ipairs({"Green","Blue","Purple","Golden"})do
-    local cost=metric(recipe[id]);local stock=counts and metric(counts[id])
-    if not cost or cost%1~=0 or not stock or stock<cost then enough=false end
-    total+=cost or 0
-   end
-   if enough and total>0 then
-    local essenceBefore=mutationTools().Enchanted.count
-    kind="craft";dispatch=function()return A.Remotes.Butterflies.AskCraftEssence:InvokeServer()end
-    confirm=function()
-     -- The net can catch more butterflies while the response replicates.
-     -- The native positive reply plus the granted consumable confirms the craft.
-     return mutationTools().Enchanted.count>essenceBefore
-    end
-   end
   end
   if not kind or not ctx.CanProgression()then return false end
-  local lock={progression=kind};local request={kind=kind,confirm=confirm};progression.Pending=request
+  local lock={progression=kind};local request={kind=kind,confirm=confirm,Moving=true};progression.Pending=request
   A.Busy=true;A.ProgressBusy=true;shared.__SEAAdminRequestLock=lock
-  progressionNotice(kind=="craft"and"Craft Enchanted Essence en cours"or"Upgrade "..kind.." en cours")
+  progressionNotice("Approche du panneau : upgrade "..kind)
   task.spawn(function()
    local accepted,why
    local completed,err=pcall(function()
     if A.Destroyed or not ctx.CanProgression()then accepted=false;why="Priorite au vol ou AUTO arrete";return end
     local permitted=ctx.GetOptions()
-    if kind=="plot"and not permitted.AutoPlotUpgrade or kind=="treadmill"and not permitted.AutoTreadmillUpgrade or kind=="craft"and not permitted.AutoPapillon then accepted=false;return end
+    if kind=="plot"and not permitted.AutoPlotUpgrade or kind=="treadmill"and not permitted.AutoTreadmillUpgrade  then accepted=false;return end
+    if not ctx.MoveForUpgrade then accepted=false;why="Deplacement upgrade indisponible";return end
+    local reached,reason=ctx.MoveForUpgrade(kind,function()
+     local latest=ctx.GetOptions()
+     return not A.Destroyed and ctx.CanProgression()and(kind=="plot"and latest.AutoPlotUpgrade or kind=="treadmill"and latest.AutoTreadmillUpgrade)
+    end)
+    request.Moving=false
+    if not reached or not ctx.CanProgression()then accepted=false;why=reason or"Priorite au vol";return end
     accepted,why=dispatch()
     if accepted==true then
-     if waitUntil(confirm,10)then progressionNotice(kind=="craft"and"Craft confirme : Enchanted Essence ajoutee"or"Upgrade "..kind.." confirme")
-     else progression.Unknown=request;progressionNotice("Upgrade/Craft accepte, confirmation en attente : aucun renvoi")end
-    else progressionNotice("Upgrade/Craft refuse : "..tostring(why or accepted))end
+     if waitUntil(confirm,10)then progressionNotice("Upgrade "..kind.." confirme")
+     else progression.Unknown=request;progressionNotice("Upgrade accepte, confirmation en attente : aucun renvoi")end
+    else progressionNotice("Upgrade "..kind.." refuse : "..tostring(why or accepted))end
    end)
    if not completed then
     if not safe(confirm)then progression.Unknown=request end
-    progressionNotice("Upgrade/Craft incertain : "..tostring(err))
+    progressionNotice("Upgrade incertain : "..tostring(err))
    end
    progression.RetryAt[kind]=os.clock()+(accepted==true and not progression.Unknown and 2 or 30)
+   request.Moving=false
    if progression.Pending==request then progression.Pending=nil end
    A.Busy=false;A.ProgressBusy=false;if shared.__SEAAdminRequestLock==lock then shared.__SEAAdminRequestLock=nil end
    pcall(A.Publish,true)
   end)
   return true
  end
- function A.ProgressNext(craftOnly)
+ function A.ProgressNext()
   if os.clock()<(A.ProgressErrorRetryAt or 0)then return false end
-  local ok,result=pcall(progressNextImpl,craftOnly)
+  local ok,result=pcall(progressNextImpl)
   if not ok then A.ProgressErrorRetryAt=os.clock()+30;progressionNotice("Progression indisponible : "..tostring(result));return false end
   return result
  end

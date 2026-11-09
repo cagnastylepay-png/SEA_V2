@@ -2359,6 +2359,7 @@ local function moveActivity(destination, token, interruptForEgg, nextDestination
 	local previous = root.Position
 	local nextCommand = 0
 	while true do
+  if autoActivity=="TO_UPGRADE"and FusionModules.UpgradeMoveValid and not FusionModules.UpgradeMoveValid()then stopMovement(true);return false,"upgrade interrompue : priorite au vol ou option OFF"end
   if autoActivity=="TO_TREADMILL"and not FusionModules.Options.AutoTreadmill then stopMovement(true);return false,"tapis OFF"end
 		if not activityValid(token, character) or humanoid.Health <= 0 then
 			stopMovement()
@@ -2441,6 +2442,35 @@ local function leaveTreadmill(token)
 	return true
 end
 
+
+function FusionModules.Helpers.MoveForUpgrade(kind,canContinue)
+ local character,_,root=getCharacterParts();local token=generation
+ if not root or not canContinue()then return false,"Upgrade interrompue"end
+ local plot=PlotState and PlotState.ResolvePlot();local folder=plot and plot.PlotFolder
+ local model=folder and folder:FindFirstChild(kind=="plot"and"PlotUpgrade"or"TreadmillUpgrade")
+ local sign=model and model:FindFirstChild("Sign")
+ if not sign or not sign:IsA("BasePart")then return false,"Panneau upgrade du plot introuvable"end
+ local exited,reason=leaveTreadmill(token);if not exited or not canContinue()then return false,reason or"Priorite au vol"end
+ if shared.__AutoSAEMovementLock then return false,"Deplacement deja en cours"end
+ local lock={Owner="AdminUpgrade",Character=character,Generation=token};shared.__AutoSAEMovementLock=lock
+ FusionModules.UpgradeMoveValid=canContinue;autoActivity="TO_UPGRADE"
+ local ok,reached,detail=pcall(function()
+  if(root.Position-sign.Position).Magnitude>7 then
+   local offset=Vector3.new(root.Position.X-sign.Position.X,0,root.Position.Z-sign.Position.Z)
+   local direction=offset.Magnitude>.01 and offset.Unit or Vector3.new(1,0,0)
+   local point=Vector3.new(sign.Position.X,root.Position.Y,sign.Position.Z)+direction*2
+   local arrived,why=moveActivity(point,token,true);if not arrived then return false,why end
+  end
+  local latest=PlotState.ResolvePlot()
+  if not activityValid(token,character)or not canContinue()or not latest or latest.PlotFolder~=folder or not sign.Parent then return false,"Plot ou action modifie"end
+  if(root.Position-sign.Position).Magnitude>7 then return false,"Distance du panneau non confirmee"end
+  return true
+ end)
+ if shared.__AutoSAEMovementLock==lock then stopMovement(true);shared.__AutoSAEMovementLock=nil end
+ FusionModules.UpgradeMoveValid=nil;autoActivity="IDLE"
+ if not ok then return false,tostring(reached)end
+ return reached,detail
+end
 
 -- World eggs always take precedence over optional inventory maintenance.
 FusionModules.SpawnPriorityUntil=0
@@ -3126,7 +3156,7 @@ local function serviceWallMaintenance(token)
 	if FusionModules.AdminRuntime then
   local runtime=FusionModules.AdminRuntime
   if runtime.ProgressPending and runtime.ProgressPending()then return end
-  if runtime.ProgressNext and runtime.ProgressNext(false)then return end
+  if runtime.ProgressNext and runtime.ProgressNext()then return end
  end
  -- Fill available spots before mutation retries can defer the rest of maintenance.
 	placeInventoryEggs(nil,token,0)
@@ -3219,8 +3249,6 @@ function FusionModules.Butterflies.Idle(token)
   local present,net=b.Available()
   if not present then break end
   if net.Parent~=character then humanoid:EquipTool(net) end
-  local runtime=FusionModules.AdminRuntime
-  if runtime and runtime.ProgressNext then runtime.ProgressNext(true)end
   task.wait(CONFIG.ScanInterval)
  end
  log("ACTION","Collecte des papillons terminee")
@@ -3304,6 +3332,7 @@ local function idleOnTreadmill(token)
 	while autoEnabled and generation == token and automaticMode and not queuePaused
 		and FusionModules.Options.AutoTreadmill and next(queuedEggs) == nil and not activityRecheckPending and not FusionModules.Butterflies.Available() and not destroyed do
 		serviceWallMaintenance(token)
+  if FusionModules.AdminRuntime and FusionModules.AdminRuntime.ProgressTravelling and FusionModules.AdminRuntime.ProgressTravelling()then task.wait(CONFIG.ScanInterval);continue end
 		if not treadmillAssigned and autoActivity ~= "TREADMILL" then return true end
 		syncQueue()
 		task.wait(CONFIG.ScanInterval)
@@ -5133,6 +5162,7 @@ shared.__AutoSAEController = {Destroy = destroy, Gui = gui, Reporting = FusionMo
    return tostring(lastStatusText or autoActivity or"En attente").." · "..reason..(FusionModules.InventoryNotice and" · "..FusionModules.InventoryNotice or"")
   end,
   MutationLock=function(value)FusionModules.MutationBusy=value==true end,
+  MoveForUpgrade=FusionModules.Helpers.MoveForUpgrade,
   CanProgression=function()
    if destroyed or not ready or not automaticMode or not autoEnabled or queuePaused or stopAfterFlight or currentCycle or serverHopPending or FusionModules.Pending()or inventoryPlacementBusy or placementRequest or hatchInProgress then return false end
    local carry=readCarry();if not carry or carry.IsCarrying then return false end
