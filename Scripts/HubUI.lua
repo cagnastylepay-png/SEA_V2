@@ -153,7 +153,7 @@ return function(engine,runtime)
   end
  end
  local groups={
-  Collecte={{'AutoEggs','Collecte automatique'},{'AutoEggsMin','Minimum /s'},{'AutoEggsMax','Maximum /s'},{'AutoIndex','Manquants dans l’index : collecte, protection vente et placement hors seuils'},{'QueueNearest','Tri : plus proche (OFF = revenu décroissant)'}},
+  Collecte={{'AutoEggs','Collecte automatique (y compris manquants)'},{'AutoEggsMin','Minimum /s'},{'AutoEggsMax','Maximum /s'},{'AutoIndex','Manquants dans l’index : collecte, protection vente et placement hors seuils'},{'QueueNearest','Tri : plus proche (OFF = revenu décroissant)'}},
   ['Déplacement']={{'AutoTreadmill','Tapis automatique'},{'AutoPapillon','Papillons automatiques'}},
   Vente={{'AutoSell','Vente automatique des œufs du backpack'},{'AutoSellMin','Œufs • minimum /s'},{'AutoSellMax','Œufs • maximum /s'},{'AutoSellAnimals','Vente automatique des animaux du backpack'},{'AutoSellAnimalsMin','Animaux • minimum /s'},{'AutoSellAnimalsMax','Animaux • maximum /s'}},
   Fusion={{'AutoFuse','Fusion automatique'},{'AutoFuseMin','Minimum /s'},{'AutoFuseMax','Maximum /s'},{'AutoEquipBest','Équiper les meilleurs après modification de l’inventaire'}},

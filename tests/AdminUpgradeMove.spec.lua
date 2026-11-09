@@ -1,5 +1,5 @@
 return function(hub)
- local a=assert(hub:find("function FusionModules.Helpers.MoveForUpgrade",1,true));local b=assert(hub:find("-- World eggs always take precedence",a,true))
+ local a=assert(hub:find("function FusionModules.Helpers.MoveForUpgrade",1,true));local b=assert(hub:find("-- World eggs have priority",a,true))
  local root={Position=Vector3.new(100,0,0)};local sign={Position=Vector3.zero,Parent=true,IsA=function(_,c)return c=="BasePart"end}
  local expected="PlotUpgrade";local model={FindFirstChild=function(_,name)return name=="Sign"and sign end}
  local ownPlot={FindFirstChild=function(_,name)assert(name==expected,"choose the requested upgrade on the local plot");return model end}
@@ -14,4 +14,5 @@ return function(hub)
  sign.Parent=nil;root.Position=Vector3.zero;assert(not fm.Helpers.MoveForUpgrade("treadmill",check),"do not buy after the plot rebuilt")
  return "Upgrade approach passed: local plot resolution, native treadmill exit, walking with egg interruption, real distance, missing/rebuilt panel and movement lock cleanup."
 end
+
 

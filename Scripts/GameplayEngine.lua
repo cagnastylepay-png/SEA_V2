@@ -886,7 +886,7 @@ do
  report.Headless=type(options)=="table" and options.Headless==true
  report.SessionId=HttpService:GenerateGUID(false)
  function report.AutomationActive()
-  return ready and automaticMode and (FusionModules.Options.AutoEggs or FusionModules.Options.AutoIndex) and not queuePaused and not stopAfterFlight and not destroyed and not serverHopPending
+  return ready and automaticMode and FusionModules.Options.AutoEggs and not queuePaused and not stopAfterFlight and not destroyed and not serverHopPending
  end
  function report.AutomationReason()
   if destroyed then return "Script arrete"end
@@ -895,7 +895,7 @@ do
   if not automaticMode then return "Mode AUTO OFF"end
   if queuePaused then return "File en pause"end
   if stopAfterFlight then return "Arret demande apres le vol"end
-  if not FusionModules.Options.AutoEggs and not FusionModules.Options.AutoIndex then return "AutoEggs et Manquants OFF"end
+  if not FusionModules.Options.AutoEggs then return "Collecte automatique OFF (protections index conservees)"end
   return autoEnabled and "Auto actif"or "Auto actif, worker en attente"
  end
  function report.FlushLogs()
@@ -907,7 +907,7 @@ do
  end
  function report.MissingCategories()
   local result={}
-  if not ready or not FusionModules.Options.AutoIndex or not Assets or not Assets.Directory then return result end
+  if not ready or not FusionModules.Options.AutoEggs or not FusionModules.Options.AutoIndex or not Assets or not Assets.Directory then return result end
   local ok,profile=pcall(Save.Peek)
   if not ok or type(profile)~="table"or type(profile.Index)~="table"then return result end
   if not FusionModules.Helpers.backpackEggCategories or not FusionModules.Helpers.plotAnimalCategories then return result end
@@ -1913,7 +1913,7 @@ FusionModules.Help.Active=shared.__SEAHelpActive
 function FusionModules.Help.Key(uid)return tostring(game.JobId)..":"..tostring(uid)end
 function FusionModules.Help.WasDelivered(uid)return FusionModules.Help.Delivered[FusionModules.Help.Key(uid)]~=nil end
 function FusionModules.Help.Present()
- if not FusionModules.Options.AutoHelp or FusionModules.Reporting.ClientKind~="admin"then return false end
+ if not FusionModules.Options.AutoEggs or not FusionModules.Options.AutoHelp or FusionModules.Reporting.ClientKind~="admin"then return false end
  local names={};for name in FusionModules.Options.HelpFavorites:gmatch("[^,%s;]+")do names[name:lower()]=true end
  for _,other in ipairs(Players:GetPlayers())do if other~=player and names[other.Name:lower()]then return true end end
  return false
@@ -2200,7 +2200,7 @@ syncQueue = function()
 			if not record or ownsEgg(uid) or not isTrackedFieldState(record)or FusionModules.Help.WasDelivered(uid)
     or(not automaticMode and entry.Source~="MANUEL")
     or(entry.Source=="HELP"and not FusionModules.Help.Eligible(record))
-				or (entry.Source == "INDEX" and (not FusionModules.Options.AutoIndex or plotCategories[record.AssetCategory]))
+				or (entry.Source == "INDEX" and (not FusionModules.Options.AutoEggs or not FusionModules.Options.AutoIndex or plotCategories[record.AssetCategory]))
     or ((entry.Source=="AUTO"or entry.Source=="RARITY")and not FusionModules.Options.AutoEggs)
     or (entry.Source=="AUTO"and ((getRatePerSecond(record)or 0)<FusionModules.Options.AutoEggsMin or (getRatePerSecond(record)or math.huge)>FusionModules.Options.AutoEggsMax))then
 				queuedEggs[uid],trackedEggs[uid] = nil,nil
@@ -2209,7 +2209,7 @@ syncQueue = function()
 			end
 		end
 	end
-	if automaticMode and(FusionModules.Options.AutoEggs or FusionModules.Options.AutoIndex)then
+	if automaticMode and FusionModules.Options.AutoEggs then
 		local ok, profile = pcall(Save.Peek)
 		local index = ok and type(profile) == "table" and profile.Index
 		local backpackCategories = FusionModules.Helpers.backpackEggCategories(ok and profile or nil)
@@ -2473,10 +2473,11 @@ function FusionModules.Helpers.MoveForUpgrade(kind,canContinue)
  return reached,detail
 end
 
--- World eggs always take precedence over optional inventory maintenance.
+-- World eggs have priority except during the reserved pass after a completed flight.
 FusionModules.SpawnPriorityUntil=0
 function FusionModules.YieldToSpawnedEggs()
  if destroyed or not ready or not automaticMode or not autoEnabled then return false end
+ if FusionModules.BetweenFlights==generation and not currentCycle then return false end
  if FusionModules.Arrival.Waiting()then wallMaintenancePending=true;return true end
  if os.clock()<FusionModules.SpawnPriorityUntil then
   wallMaintenancePending=true
@@ -3145,7 +3146,7 @@ function FusionModules.Helpers.EquipBestForInventory()
  return ok and accepted==true
 end
 
-local function serviceWallMaintenance(token)
+local function serviceWallMaintenanceBody(token)
 	if destroyed or not automaticMode or not autoEnabled or generation ~= token or currentCycle or FusionModules.Pending() or inventoryPlacementBusy or placementRequest then return end
  if FusionModules.AdminRuntime and FusionModules.AdminRuntime.ManualPending then return end
     if FusionModules.YieldToSpawnedEggs() then return end
@@ -3157,7 +3158,7 @@ local function serviceWallMaintenance(token)
 	if FusionModules.AdminRuntime then
   local runtime=FusionModules.AdminRuntime
   if runtime.ProgressPending and runtime.ProgressPending()then return end
-  if runtime.ProgressNext and runtime.ProgressNext()then return end
+  if not FusionModules.BetweenFlights and runtime.ProgressNext and runtime.ProgressNext()then return end
  end
  -- Fill available spots before mutation retries can defer the rest of maintenance.
 	placeInventoryEggs(nil,token,0)
@@ -3188,6 +3189,20 @@ local function serviceWallMaintenance(token)
     end
 end
 
+
+-- Reserve one maintenance pass before selecting the next field egg. Never bypass
+-- carry/transaction locks or generation checks, and always release on errors.
+local function serviceWallMaintenance(token,postFlight)
+ if not postFlight then return serviceWallMaintenanceBody(token)end
+ if destroyed or not automaticMode or not autoEnabled or generation~=token or currentCycle or serverHopPending or stopAfterFlight then return end
+ local carry=readCarry()
+ local _,_,root=getCharacterParts()
+ if not carry or carry.IsCarrying or not root or isSafe(root.Position)~=true then return end
+ FusionModules.BetweenFlights=token
+ local ok,why=xpcall(function()serviceWallMaintenanceBody(token)end,debug.traceback)
+ FusionModules.BetweenFlights=nil
+ if not ok then error(why)end
+end
 
 -- Butterfly waiting uses the game's event clock and native net tool.
 FusionModules.Butterflies = {Until=0, Revision=0, RetryAt=0}
@@ -3439,7 +3454,7 @@ local function worker(token)
 				if refreshQueueInterface then refreshQueueInterface() end
 				if renderControls then renderControls() end
 				if automaticMode and not stopAfterFlight then
-					serviceWallMaintenance(token)
+					serviceWallMaintenance(token,true)
 				end
 			end
 			if not success then
@@ -3935,6 +3950,7 @@ function FusionModules.RemoteHop.Receive(message)
  hop.Try()
 end
 function FusionModules.RemoteHop.Try()
+ if FusionModules.BetweenFlights then return false end
  local hop=FusionModules.RemoteHop
  if hop.Processing or serverHopPending or not hop.Pending or os.clock()<hop.RetryAt then return false end
  if FusionModules.MutationBusy or FusionModules.ManualBusy then return false end

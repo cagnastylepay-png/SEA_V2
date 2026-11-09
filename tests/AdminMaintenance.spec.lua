@@ -1,6 +1,6 @@
 return function(hub)
 local function section(first,last)local a=assert(hub:find(first,1,true));local b=assert(hub:find(last,a,true));return hub:sub(a,b-1)end
-local service=section("local function serviceWallMaintenance(","-- Butterfly waiting")
+local service=section("local function serviceWallMaintenanceBody(","-- Butterfly waiting")
 local hatch=section("local function hatchReadyEggsOnWallClose(","function FusionModules.Helpers.PlotEggCountdown(")
 
 local function compile(source,env)local f=assert(loadstring(source));setfenv(f,setmetatable(env,{__index=getfenv()}));return f()end
