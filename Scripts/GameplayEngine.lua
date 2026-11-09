@@ -132,6 +132,7 @@ function FusionModules.Helpers.SetOption(key,value)
   if key:match("Max$")and type(FusionModules.Options[prefix.."Min"])=="number"and value<FusionModules.Options[prefix.."Min"]then return false,"Maximum inferieur au minimum"end
  end
  FusionModules.Options[key]=value
+ if key=="AutoEggs"and current==true and value==false and FusionModules.Helpers.StopCollection then FusionModules.Helpers.StopCollection()end
  minimumRatePerSecond=FusionModules.Options.AutoEggsMin
  autoIncludeMissingIndex=FusionModules.Options.AutoIndex
  automaticMode=true
@@ -1174,6 +1175,7 @@ local function startReturnImmediately(ctx, source)
 end
 
 local function requestCarry(ctx)
+ if ctx.CollectionStopped then return end
 	if inFlightRequest and not inFlightRequest.done then return end
 	if ctx.attempts >= CONFIG.MaxCarryAttempts then return end
 	local request = {uid = ctx.uid, started = os.clock(), done = false, retryable = false, movementRevision = movementRevision}
@@ -1308,6 +1310,7 @@ end
 
 
 local function followTakenEgg(ctx)
+ if ctx.CollectionStopped then return false,"COLLECTION_STOPPED"end
 	local startedFollowing=false
 	while validCycle(ctx) do
 		if stopAfterFlight then stopMovement(true); return false,"arret du suivi demande" end
@@ -1377,6 +1380,7 @@ local function approachEgg(ctx, destination)
 		end
 		local function checkProgress()
 			if not active then return end
+   if ctx.CollectionStopped then stopMovement(true);complete(false,"COLLECTION_STOPPED");return end
 			local valid, reason = validCycle(ctx)
 			if not valid then complete(false, reason); return end
 			if ctx.help and FusionModules.Help.HasNormal()then complete(false,"HELP_PRIORITY");return end
@@ -1513,6 +1517,7 @@ local function tryCarryOnce(ctx)
 end
 
 local function moveThenCarry(ctx, destination)
+ if ctx.CollectionStopped then return updateCarryEvidence(ctx),"COLLECTION_STOPPED"end
 	local lastReason
 	for attempt = 1, CONFIG.MaxCarryAttempts do
 		if not validCycle(ctx) then return false, "annule" end
@@ -1682,7 +1687,7 @@ local function moveReturnLoop(ctx, destination)
 	while true do
 		local valid, reason = validCycle(ctx)
 		if not valid then return false, reason end
-		if ctx.watchForReappearance then
+		if ctx.watchForReappearance and not ctx.CollectionStopped then
 			local carry = readCarry()
 			if carry and carry.IsCarrying and carry.Uid == ctx.uid then
 				ctx.hadCarry, ctx.sawCarry, ctx.watchForReappearance = true, true, false
@@ -1982,7 +1987,7 @@ local function runCycle(record, rate, recovering, findNext)
  local helpDestination=help and FusionModules.Help.Destination()
  if help and not helpDestination then return false,"Centre Forest introuvable"end
  local ctx = {
-  help=help,
+  help=help,CollectionStopped=FusionModules.CollectionReturnPending==true,
 		uid = record.Uid, record = record, generation = generation, character = character, findNext = findNext,
 		startedAt = os.clock(), phaseStartedAt = os.clock(),
 		home = safeHome, eggPosition = record.BottomCFrame and record.BottomCFrame.Position,
@@ -2015,7 +2020,8 @@ local function runCycle(record, rate, recovering, findNext)
 		if not grabbed and inFlightRequest and not inFlightRequest.done then
 			return false, grabReason or "requete serveur encore en cours"
 		end
-		if ctx.help then
+		if ctx.CollectionStopped then ctx.help=false;ctx.findNext=nil end
+  if ctx.help then
    if grabbed then
     local delivered,why=moveReturnLoop(ctx,helpDestination)
     if not delivered then return false,why end
@@ -2079,6 +2085,17 @@ local function runCycle(record, rate, recovering, findNext)
 	cleanupCycle(ctx)
 	if not cycleOK then return false, tostring(completed) end
 	return completed, failure
+end
+
+function FusionModules.Helpers.StopCollection()
+ table.clear(queuedEggs);table.clear(trackedEggs);table.clear(selectedEggs);table.clear(removedFromAuto)
+ FusionModules.CollectionReturnPending=true
+ FusionModules.CollectionResetVersion=(FusionModules.CollectionResetVersion or 0)+1
+ if currentCycle then currentCycle.CollectionStopped=true;currentCycle.findNext=nil end
+ if FusionModules.RemoteHop then FusionModules.RemoteHop.Pending=nil end
+ wallMaintenancePending=true
+ if refreshQueueInterface then refreshQueueInterface()end
+ setStatus("Collecte OFF : file videe, retour en zone sure")
 end
 
 local function ingest(record)
@@ -2209,7 +2226,7 @@ syncQueue = function()
 			end
 		end
 	end
-	if automaticMode and FusionModules.Options.AutoEggs then
+	if automaticMode and FusionModules.Options.AutoEggs and not FusionModules.CollectionReturnPending then
 		local ok, profile = pcall(Save.Peek)
 		local index = ok and type(profile) == "table" and profile.Index
 		local backpackCategories = FusionModules.Helpers.backpackEggCategories(ok and profile or nil)
@@ -2252,7 +2269,7 @@ syncQueue = function()
 		end)
 		for _, record in ipairs(candidates) do enqueueEgg(record, "INDEX") end
 	end
-	if FusionModules.Help.Present()then
+	if not FusionModules.CollectionReturnPending and FusionModules.Help.Present()then
   for uid,record in pairs(records)do if not queuedEggs[uid]and FusionModules.Help.Eligible(record)then enqueueEgg(record,"HELP")end end
  end
  local total, queued, above = 0, 0, 0
@@ -2360,6 +2377,7 @@ local function moveActivity(destination, token, interruptForEgg, nextDestination
 	local previous = root.Position
 	local nextCommand = 0
 	while true do
+  if autoActivity=="TO_FARM"and FusionModules.CollectionReturnPending then stopMovement(true);return false,"COLLECTION_STOPPED"end
   if autoActivity=="TO_UPGRADE"and FusionModules.UpgradeMoveValid and not FusionModules.UpgradeMoveValid()then stopMovement(true);return false,"upgrade interrompue : priorite au vol ou option OFF"end
   if autoActivity=="TO_TREADMILL"and not FusionModules.Options.AutoTreadmill then stopMovement(true);return false,"tapis OFF"end
 		if not activityValid(token, character) or humanoid.Health <= 0 then
@@ -3374,10 +3392,43 @@ local function requestUserStop(reason)
 	end
 end
 
+-- A collection stop empties the queue immediately; return uses the same movement
+-- and carry confirmation as normal gameplay, independently of the spawn cycle.
+function FusionModules.Helpers.ReturnAfterCollectionStop(token)
+ if not FusionModules.CollectionReturnPending then return false end
+ if destroyed or not autoEnabled or generation~=token then return true end
+ if (inFlightRequest and not inFlightRequest.done)or FusionModules.Pending()or inventoryPlacementBusy or placementRequest or hatchInProgress then task.wait(.1);return true end
+ local carry=readCarry()
+ if not carry then stopAutomation("Retour : etat de portage indisponible");return true end
+ if carry.IsCarrying then
+  if not carry.Uid then stopAutomation("Retour : oeuf porte non identifie");return true end
+  local record=readField(carry.Uid)or{Uid=carry.Uid,AssetCategory=carry.AssetCategory}
+  local ok,why=runCycle(record,getRatePerSecond(record),true,nil)
+  if not ok then stopAutomation("Retour avec oeuf : "..tostring(why));return true end
+ end
+ local _,_,root=getCharacterParts()
+ if not root then stopAutomation("Retour : personnage absent");return true end
+ if isSafe(root.Position)~=true then
+  local destination,why=getStartAreaDestination()
+  if not destination then stopAutomation(tostring(why));return true end
+  local exited,reason=leaveTreadmill(token)
+  if not exited then stopAutomation("Sortie tapis : "..tostring(reason));return true end
+  autoActivity="RETURN_COLLECTION_STOP"
+  local arrived,detail=moveActivity(destination,token,false)
+  local _,_,latest=getCharacterParts()
+  if not arrived or not latest or isSafe(latest.Position)~=true then stopAutomation("Retour safe non confirme : "..tostring(detail));return true end
+ end
+ if destroyed or generation~=token then return true end
+ FusionModules.CollectionReturnPending=nil;autoActivity="IDLE"
+ setStatus("Collecte OFF : file vide, zone sure atteinte")
+ return true
+end
+
 local function worker(token)
 	local directNext = false
 	while autoEnabled and generation == token and not destroyed do
         syncQueue()
+  if FusionModules.Helpers.ReturnAfterCollectionStop(token)then task.wait();continue end
 		if FusionModules.Arrival.Waiting()then
 			autoActivity="ARRIVAL_WAIT"
 			setStatus("Arrivee : chargement de l'oeuf cible avant le vol...")
@@ -3439,7 +3490,7 @@ local function worker(token)
 				local eggPosition = getRecordPosition(records[selected.Uid] or selected)
 				local nextDestination = eggPosition and Vector3.new(eggPosition.X, destination.Y, eggPosition.Z)
 				local reached, reason = measureAction("TRAJET_STARTAREA", moveActivity, destination, token, false, nextDestination)
-				if not reached then stopAutomation("StartArea : " .. tostring(reason)); return end
+				if not reached then if FusionModules.CollectionReturnPending then directNext=false;continue end;stopAutomation("StartArea : " .. tostring(reason)); return end
 			end
 			if not autoEnabled or generation ~= token then return end
 			autoActivity = "FARM"
@@ -3458,6 +3509,7 @@ local function worker(token)
 				end
 			end
 			if not success then
+    if FusionModules.CollectionReturnPending then directNext=false;continue end
 				if reason == "GAMEPLAY_ENTRY_REQUIRED" then
 					stopAutomation("Prise refusee : entre manuellement dans la zone de jeu puis relance la collecte.")
 					return
@@ -4195,6 +4247,7 @@ if previous and type(previous.Destroy) == "function" then
 end
 shared.__AutoSAEController = {Destroy = destroy, Gui = gui, Reporting = FusionModules.Reporting,
  IsEnabled=function()return automaticMode end,
+ QueueResetVersion=function()return FusionModules.CollectionResetVersion or 0 end,
  FieldRecords=function()
   local rows={};for uid,r in pairs(records)do if isTrackedFieldState(r)and not ownsEgg(uid)then table.insert(rows,r)end end;return rows
  end,
@@ -4245,8 +4298,11 @@ shared.__AutoSAEController = {Destroy = destroy, Gui = gui, Reporting = FusionMo
   SetEnabled=function(value)return shared.__AutoSAEController.SetEnabled(value)end,
   SetOptions=function(options)
    local was=automaticMode
+   local collecting=FusionModules.Options.AutoEggs
    if not FusionModules.Helpers.RestoreOptions(options)then return false end
-   automaticMode=was;FusionModules.Reporting.MarkSettingsDirty();wallMaintenancePending=true
+   automaticMode=was
+   if collecting and not FusionModules.Options.AutoEggs then FusionModules.Helpers.StopCollection()end
+   FusionModules.Reporting.MarkSettingsDirty();wallMaintenancePending=true
    if ready and automaticMode then syncQueue();wakeQueue()end
    executorTools.SaveSettings();return true
   end,

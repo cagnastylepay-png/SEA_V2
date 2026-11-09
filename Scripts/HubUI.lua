@@ -248,6 +248,8 @@ return function(engine,runtime)
  end
  task.spawn(function()
   while not U.Destroyed do
+   local reset=engine.QueueResetVersion and engine.QueueResetVersion()or 0
+   if U.QueueReset~=reset then U.QueueReset=reset;table.clear(U.Selected);invalidate()end
    active(auto,engine.IsEnabled());auto.Text=engine.IsEnabled()and'AUTO ON'or'AUTO OFF'
    for n,b in pairs(tabButtons)do active(b,page==n)end
    local connected=engine.Reporting.Ready and'Connecté'or'Connexion Observer…'
