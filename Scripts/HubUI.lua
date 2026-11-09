@@ -153,7 +153,7 @@ return function(engine,runtime)
   end
  end
  local groups={
-  Collecte={{'AutoEggs','Collecte automatique (y compris manquants)'},{'AutoEggsMin','Minimum /s'},{'AutoEggsMax','Maximum /s'},{'AutoIndex','Manquants dans l’index : collecte, protection vente et placement hors seuils'},{'QueueNearest','Tri : plus proche (OFF = revenu décroissant)'}},
+  Collecte={{'AutoEggs','Collecte automatique (y compris manquants)'},{'AutoEggsMaxBiome','Biome maximum (inclus)'},{'AutoEggsMin','Minimum /s'},{'AutoEggsMax','Maximum /s'},{'AutoIndex','Manquants dans l’index : collecte, protection vente et placement hors seuils'},{'QueueNearest','Tri : plus proche (OFF = revenu décroissant)'}},
   ['Déplacement']={{'AutoTreadmill','Tapis automatique'},{'AutoPapillon','Papillons automatiques'}},
   Vente={{'AutoSell','Vente automatique des œufs du backpack'},{'AutoSellMin','Œufs • minimum /s'},{'AutoSellMax','Œufs • maximum /s'},{'AutoSellAnimals','Vente automatique des animaux du backpack'},{'AutoSellAnimalsMin','Animaux • minimum /s'},{'AutoSellAnimalsMax','Animaux • maximum /s'}},
   Fusion={{'AutoFuse','Fusion automatique'},{'AutoFuseMin','Minimum /s'},{'AutoFuseMax','Maximum /s'},{'AutoEquipBest','Équiper les meilleurs après modification de l’inventaire'}},
@@ -181,7 +181,22 @@ return function(engine,runtime)
   for i,s in ipairs(specs or{})do
    local row=make('Frame',s[1],list,{Size=UDim2.new(1,0,0,62),BackgroundColor3=theme.card,LayoutOrder=i});corner(row)
    text(row,'Label',s[2],UDim2.fromOffset(16,8),UDim2.new(1,-300,1,-16))
-   if type(draft[s[1]])=='boolean'then
+   if s[1]=='AutoEggsMaxBiome'then
+    local choices=engine.AdminContext.BiomeChoices()
+    local chosen='Tous les biomes';for _,v in ipairs(choices)do if v.id==draft[s[1]]then chosen=v.label end end
+    local select
+    select=button(row,'BiomeSelect',chosen,UDim2.new(1,-360,0,7),UDim2.fromOffset(342,48),function()
+     local old=gui:FindFirstChild('BiomePopup');if old then old:Destroy()end
+     local shade=make('Frame','BiomePopup',gui,{Size=UDim2.fromScale(1,1),BackgroundColor3=Color3.new(),BackgroundTransparency=.3,ZIndex=20})
+     local box=make('Frame','Dialog',shade,{AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.5,.5),Size=UDim2.fromOffset(620,620),BackgroundColor3=theme.bg,ZIndex=21});corner(box);make('UIScale','Scale',box,{Scale=scale.Scale})
+     text(box,'Title','Biome maximum (inclus)',UDim2.fromOffset(20,16),UDim2.new(1,-90,0,48),Enum.Font.GothamBold).ZIndex=22
+     button(box,'Close','×',UDim2.new(1,-66,0,16),UDim2.fromOffset(46,46),function()shade:Destroy()end).ZIndex=22
+     local list=make('ScrollingFrame','Choices',box,{Position=UDim2.fromOffset(20,82),Size=UDim2.new(1,-40,1,-100),BackgroundTransparency=1,BorderSizePixel=0,CanvasSize=UDim2.new(),AutomaticCanvasSize=Enum.AutomaticSize.Y,ScrollBarThickness=4,ZIndex=22})
+     make('UIListLayout','Layout',list,{Padding=UDim.new(0,8),SortOrder=Enum.SortOrder.LayoutOrder})
+     for n,v in ipairs(choices)do local b=button(list,v.id,v.label,nil,UDim2.new(1,-8,0,48),function()draft.AutoEggsMaxBiome=v.id;select.Text=v.label;shade:Destroy()end);b.LayoutOrder=n;b.ZIndex=23;active(b,v.id==(draft.AutoEggsMaxBiome or'All'))end
+    end)
+    row.Label.Size=UDim2.new(1,-390,1,-16)
+   elseif type(draft[s[1]])=='boolean'then
     local b
     b=button(row,'Toggle',draft[s[1]]and'ON'or'OFF',UDim2.new(1,-180,0,7),UDim2.fromOffset(162,48),function()draft[s[1]]=not draft[s[1]];b.Text=draft[s[1]]and'ON'or'OFF';active(b,draft[s[1]])end);active(b,draft[s[1]])
    else

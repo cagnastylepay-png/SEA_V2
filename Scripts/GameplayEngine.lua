@@ -118,10 +118,34 @@ for _,id in ipairs({"Boss","Scrambled","Enchanted","Nitro","Spectral","Musical",
  FusionModules.Options["Mutation"..id.."Attempts"]=1
 end
 
+FusionModules.Options.AutoEggsMaxBiome="All"
+-- Verified Data.Areas progression; explicit AreaId, never inferred from pet rarity.
+FusionModules.Biomes={{id="Forest",label="Forest"},{id="Lake",label="Lake"},{id="Desert",label="Desert"},{id="Jungle",label="Jungle"},{id="Snow",label="Snow"},{id="Volcano",label="Volcano"},{id="Abyss Ocean",label="Abyss Ocean"},{id="Prehistoric",label="Prehistoric"},{id="Cosmic",label="Cosmic"},{id="Cherry Blossom",label="Cherry Blossom"},{id="Titan Temple",label="Titan Temple"},{id="Light Dark",label="Angels & Demons"},{id="Enchanted Forest",label="Enchanted Forest"},{id="Alien",label="Aliens"}}
+function FusionModules.Helpers.ValidMaxBiome(id)
+ if id=="All"then return true end
+ for _,b in ipairs(FusionModules.Biomes)do if b.id==id then return true end end
+ return false
+end
+function FusionModules.Helpers.BiomeChoices()
+ local choices={{id="All",label="Tous les biomes"}}
+ for _,b in ipairs(FusionModules.Biomes)do table.insert(choices,table.clone(b))end
+ return choices
+end
+function FusionModules.Helpers.AllowedBiome(record)
+ local maximum=FusionModules.Options.AutoEggsMaxBiome or"All"
+ if maximum=="All"then return true end
+ local area=record and(record.AreaId or record.areaId or record.zone)
+ local rank,limit
+ for i,b in ipairs(FusionModules.Biomes)do if b.id==area then rank=i end;if b.id==maximum then limit=i end end
+ return rank~=nil and limit~=nil and rank<=limit
+end
+
 function FusionModules.Helpers.SetOption(key,value)
  local current=FusionModules.Options[key]
  if current==nil then return false,"Parametre inconnu"end
- if key=="HelpFavorites"then
+ if key=="AutoEggsMaxBiome"then
+  if not FusionModules.Helpers.ValidMaxBiome(value)then return false,"Biome inconnu"end
+ elseif key=="HelpFavorites"then
   if not FusionModules.Helpers.ValidHelpFavorites(value)then return false,"Favoris invalides"end
  elseif type(current)=="boolean"then
   if type(value)~="boolean"then return false,"Interrupteur invalide"end
@@ -152,6 +176,7 @@ function FusionModules.Helpers.RestoreOptions(saved)
  end
  if candidate.AutoEggsMin>candidate.AutoEggsMax or candidate.AutoSellMin>candidate.AutoSellMax or candidate.AutoOpenMin>candidate.AutoOpenMax or candidate.AutoPlaceMin>candidate.AutoPlaceMax or candidate.AutoFuseMin>candidate.AutoFuseMax then return false end
  if candidate.AutoSellAnimalsMin>candidate.AutoSellAnimalsMax then return false end
+ if not FusionModules.Helpers.ValidMaxBiome(candidate.AutoEggsMaxBiome)then return false end
  if not FusionModules.Helpers.ValidHelpFavorites(candidate.HelpFavorites)then return false end
  for _,id in ipairs({"Boss","Scrambled","Enchanted","Nitro","Spectral","Musical","Alien","DarkMatter"})do local n=candidate["Mutation"..id.."Attempts"];if n%1~=0 or n<1 or n>100 then return false end end
  FusionModules.Options=candidate
@@ -2180,7 +2205,8 @@ end
 
 local function enqueueEgg(record, source)
 	if type(record) ~= "table" or type(record.Uid) ~= "string" then return false end
-	if FusionModules.Help.WasDelivered(record.Uid)then return false end
+	if source~="MANUEL"and not FusionModules.Helpers.AllowedBiome(record)then return false end
+ if FusionModules.Help.WasDelivered(record.Uid)then return false end
  local function reject(reason)
 		if source == "AUTO" or source == "RARITY" then logQueueDecision(record.Uid, reason) end
 		return false
@@ -2216,6 +2242,7 @@ syncQueue = function()
 			local record = readField(uid)
 			if not record or ownsEgg(uid) or not isTrackedFieldState(record)or FusionModules.Help.WasDelivered(uid)
     or(not automaticMode and entry.Source~="MANUEL")
+    or(entry.Source~="MANUEL"and not FusionModules.Helpers.AllowedBiome(record))
     or(entry.Source=="HELP"and not FusionModules.Help.Eligible(record))
 				or (entry.Source == "INDEX" and (not FusionModules.Options.AutoEggs or not FusionModules.Options.AutoIndex or plotCategories[record.AssetCategory]))
     or ((entry.Source=="AUTO"or entry.Source=="RARITY")and not FusionModules.Options.AutoEggs)
@@ -3979,6 +4006,7 @@ function FusionModules.RemoteHop.Validate(target, forced)
  local rate=target.incomePerSecond
  if type(rate)~="number" or rate~=rate or rate<0 or rate>=math.huge then return false end
   local missing=FusionModules.Options.AutoIndex and report.MissingCategories()[target.category]==true
+ if not FusionModules.Helpers.AllowedBiome(target)then return false end
  if not missing and not (FusionModules.Options.AutoEggs and rate>=FusionModules.Options.AutoEggsMin and rate<=FusionModules.Options.AutoEggsMax)then return false end
  if visitedServers[target.jobId] or target.carrierUserId or target.state=="Carried" or target.state=="Claimed" or target.observationOnly then return false end
  return true
@@ -4263,6 +4291,7 @@ shared.__AutoSAEController = {Destroy = destroy, Gui = gui, Reporting = FusionMo
   SetRuntime=function(runtime)FusionModules.AdminRuntime=runtime end,
   Ready=function()return ready and not destroyed end,
   GetOptions=function()return table.clone(FusionModules.Options)end,
+  BiomeChoices=FusionModules.Helpers.BiomeChoices,
   InventoryNotice=function(text)FusionModules.InventoryNotice=tostring(text):sub(1,500)end,
   BeginManual=function()
    if destroyed or not ready or serverHopPending or currentCycle or inventoryPlacementBusy or placementRequest or hatchInProgress or FusionModules.Pending() or(inFlightRequest and not inFlightRequest.done)then return false end

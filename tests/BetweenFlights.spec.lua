@@ -10,6 +10,7 @@ return function(source)
   enqueueEgg=function(r,kind)queued[r.Uid]={Source=kind,Record=r};return true end,
   player={UserId=1},getCharacterParts=function()return nil,nil,{Position=Vector3.zero}end,isSafe=function()return true end,
   readCarry=function()return{IsCarrying=false}end,wallMaintenancePending=true},{__index=getfenv()})
+ fm.Helpers.AllowedBiome=function()return true end
  fm.Helpers.plotAnimalCategories=function()return{}end;fm.Helpers.backpackEggCategories=function()return{}end
  fm.Helpers.IsAlwaysEligibleRarity=function()return false end
  fm.Help={WasDelivered=function()return false end,Present=function()return false end}
