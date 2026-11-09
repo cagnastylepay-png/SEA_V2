@@ -42,7 +42,8 @@ return function(hub)
  local worker=section('local function worker(token)','startAutomation = function(')
  assert(worker:find('FusionModules.Arrival.Waiting()',1,true)<worker:find('serviceWallMaintenance(token)',1,true),'arrival gate precedes inventory maintenance')
  local uiEnd=assert(hub:find('-- Gameplay polling belongs to the engine',1,true))
- assert(uiEnd>assert(hub:find('log("UI_READY"',1,true)),'queue heartbeat must live outside optional GUI')
+ assert(uiEnd and not hub:find("local function createInterface()",1,true),"headless engine polling must not depend on a GUI")
  assert(hub:find('if FusionModules.ManualBusy or FusionModules.MutationBusy or FusionModules.Pending()',1,true),'global heartbeat must preserve manual mutation/action lock')
  return 'Arrival regressions passed: delayed replication, exact eligible target priority, current options, foreign/stale targets, timeout, ownership, carrying, AUTO OFF, headless polling and manual action lock.'
 end
+

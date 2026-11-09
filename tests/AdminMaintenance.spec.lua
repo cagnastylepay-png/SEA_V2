@@ -5,7 +5,7 @@ local hatch=section("local function hatchReadyEggsOnWallClose(","function Fusion
 
 local function compile(source,env)local f=assert(loadstring(source));setfenv(f,setmetatable(env,{__index=getfenv()}));return f()end
 local calls={};local priority=false
-local fusion={Options={AutoMutations=true},Ready=true,Reporting={ClientKind="admin"},Pending=function()return false end,YieldToSpawnedEggs=function()return priority end,Helpers={EquipBestForInventory=function()table.insert(calls,"equip-failed");return false end},AdminRuntime={Initialized=true,MutateNext=function()table.insert(calls,"mutate");return true end,SellAnimals=function()table.insert(calls,"animals")end},Run=function()table.insert(calls,"fuse")end,Protect=function(_,fn)fn();return true end}
+local fusion={Options={AutoMutations=true,AutoEquipBest=true},Ready=true,Reporting={ClientKind="admin"},Pending=function()return false end,YieldToSpawnedEggs=function()return priority end,Helpers={EquipBestForInventory=function()table.insert(calls,"equip-failed");return false end},AdminRuntime={Initialized=true,MutateNext=function()table.insert(calls,"mutate");return true end,SellAnimals=function()table.insert(calls,"animals")end},Run=function()table.insert(calls,"fuse")end,Protect=function(_,fn)fn();return true end}
 local run=compile(service.."\nreturn serviceWallMaintenance",{destroyed=false,automaticMode=true,autoEnabled=true,generation=1,wallMaintenancePending=true,FusionModules=fusion,getCharacterParts=function()return nil,nil,{Position=Vector3.zero}end,isSafe=function()return true end,placeInventoryEggs=function()table.insert(calls,"place");return 0 end,hatchReadyEggsOnWallClose=function()table.insert(calls,"hatch");return 0 end,sellInventoryEggsBelowMinimum=function()table.insert(calls,"sell")end})
 run(1);assert(table.concat(calls,",")=="place,mutate,hatch,sell,animals,place,equip-failed,fuse","mutations and Equip Best failure cannot starve other work")
 calls={};priority=true;run(1);assert(#calls==0,"eligible egg always wins")
@@ -18,4 +18,5 @@ assert(h(1)==1 and opened[1]=="a","use actual countdown; only hold egg awaiting 
 return "Scheduler regressions passed: eligible-flight priority; no cycle dependency; mutation retries and failed Equip Best cannot starve fusion/sales; hatch uses card countdown; per-egg mutation hold; manual boundary."
 
 end
+
 

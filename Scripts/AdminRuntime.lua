@@ -15,6 +15,7 @@ return function(ctx)
  end
  local function metric(v)return type(v)=="number"and v==v and v>=0 and v<math.huge and v or nil end
  local function send(m)
+  if ctx.LocalOnly then if ctx.OnResult and m.type=="admin.command.result"then ctx.OnResult(m)end;return true end
   if A.Destroyed or not ctx.Report.Ready or not ctx.Report.Socket then return false end
   local ok=pcall(function()
    if m.type=="admin.inventory.snapshot"then
@@ -180,6 +181,14 @@ return function(ctx)
    sellValue=metric(isEgg and safe(A.EggRecords.SellPrice,record)or safe(A.Items.SalePrice,item)),
    remainingSeconds=seconds,ready=grown==true,locked=record and record.Locked==true or false}
  end
+ function A.FieldSnapshot()
+  local rows={}
+  for _,record in ipairs(ctx.FieldRecords and ctx.FieldRecords()or{})do
+   local item=safe(A.EggRecords.ToAssetItemData,record)
+   if item then local r=row(record.Uid,item,"field",true,record);table.insert(rows,r)end
+  end
+  return rows
+ end
  function A.Snapshot()
   local p=profile();local eggs,animals={},{};local worn=equipped();local animalRows={}
   for uid,record in pairs(ownedEggs())do
@@ -211,6 +220,7 @@ return function(ctx)
    offlineDurationSeconds=duration,offlineRateMultiplier=multiplier}}
  end
  function A.Publish(force)
+  if ctx.LocalOnly then return false end
   if not A.Initialized or not ctx.Ready()or not ctx.Report.SettingsAllowed or not ctx.Report.Ready or not ctx.Report.Socket then return end
   if A.SentSocket~=ctx.Report.Socket then A.SentAt=nil;A.Signature=nil end
   -- Gameplay conditions use the local Save; bursts only queue the latest dashboard state.
@@ -457,7 +467,7 @@ return function(ctx)
  function A.Receive(m)
   if m.version~=1 or type(m.requestId)~="string"or# m.requestId>100 then return end
   if A.Seen[m.requestId]then send(A.Seen[m.requestId]);return end
-  if A.Busy or shared.__SEAAdminRequestLock or not A.Initialized or not ctx.Report.SettingsAllowed then
+  if A.Busy or shared.__SEAAdminRequestLock or not A.Initialized or(not ctx.LocalOnly and not ctx.Report.SettingsAllowed)then
    send({version=1,type="admin.command.result",requestId=m.requestId,status="rejected",message="Admin indisponible ou action en cours"});return
   end
   A.Busy=true
@@ -486,8 +496,8 @@ return function(ctx)
    send(result);pcall(A.Publish,true)
   end)
  end
- function A.Destroy()A.Destroyed=true;releaseMutationTool();for _,c in ipairs(A.Connections or{})do c:Disconnect()end;ctx.Report.AdminReceive=nil end
- ctx.Report.AdminReceive=A.Receive
+ function A.Destroy()A.Destroyed=true;releaseMutationTool();for _,c in ipairs(A.Connections or{})do c:Disconnect()end;if not ctx.LocalOnly then ctx.Report.AdminReceive=nil end end
+ if not ctx.LocalOnly then ctx.Report.AdminReceive=A.Receive end
  task.spawn(function()
   while not A.Destroyed and not ctx.Ready()do task.wait(.5)end
   if A.Destroyed then return end
