@@ -659,6 +659,19 @@ local function isSafe(position)
 	return not GuardGeometry.IsPastLine(line, position)
 end
 
+-- Use the game's own local arena and tagged-safe-volume checks. This is not
+-- a server acknowledgement; native server refusals remain authoritative.
+function FusionModules.Helpers.GameplayEntryAllowed()
+ local guard=FusionModules.GameplayGuard
+ if not guard then return false,"controle natif indisponible"end
+ local ok,inside=pcall(guard.IsLocalInsideArena)
+ local safeOK,safe=pcall(guard.IsInsideSafeZone,player)
+ if not ok or not safeOK then return false,"etat natif indisponible"end
+ if inside~=true then return false,"hors zone de jeu selon le controle natif"end
+ if safe==true then return false,"dans un volume de zone sure"end
+ return true
+end
+
 local function validCycle(ctx)
 	if destroyed or not autoEnabled or generation ~= ctx.generation or currentCycle ~= ctx then
 		return false, "annule"
@@ -1201,6 +1214,8 @@ end
 
 local function requestCarry(ctx)
  if ctx.CollectionStopped then return end
+ local allowed,entryReason=FusionModules.Helpers.GameplayEntryAllowed()
+ if not allowed then ctx.gameplayEntryRejected=true;log("CARRY_DIAG","Prise non envoyee : %s",entryReason);return end
 	if inFlightRequest and not inFlightRequest.done then return end
 	if ctx.attempts >= CONFIG.MaxCarryAttempts then return end
 	local request = {uid = ctx.uid, started = os.clock(), done = false, retryable = false, movementRevision = movementRevision}
@@ -1211,11 +1226,16 @@ local function requestCarry(ctx)
 	setPhase(ctx, "CARRY_PENDING", "Prise serveur : " .. getAnimalName(ctx.record))
 	log("CARRY_REQUEST", "Tentative=%d UID=%s", ctx.attempts, ctx.uid)
 	task.spawn(function()
-		if not validCycle(ctx) then
+		if not validCycle(ctx) or ctx.CollectionStopped then
 			request.done = true
 			return
 		end
-		-- Recheck after task.spawn: high speed may have carried us past the egg.
+		local entryOK,entryReason=FusionModules.Helpers.GameplayEntryAllowed()
+  if not entryOK then
+   ctx.gameplayEntryRejected=true;request.done=true;request.accepted=false;request.retryable=false;request.reason=entryReason
+   if ctx.onCarryReply then ctx.onCarryReply(request)end;return
+  end
+  -- Recheck after task.spawn: high speed may have carried us past the egg.
 		local _, _, root = getCharacterParts()
 		local latest = readField(ctx.uid)
 		local eggPosition = getRecordPosition(latest)
@@ -1250,7 +1270,8 @@ local function requestCarry(ctx)
 			tostring(slotKey))
 		local ok, accepted, reason = pcall(EggState.CarryFieldEgg, ctx.uid, slotKey)
 		if ok and accepted ~= true and type(reason) == "string" and reason:find("Enter the gameplay area first", 1, true) then
-			ctx.gameplayEntryRejected = ctx.attempts >= CONFIG.MaxCarryAttempts
+			ctx.gameplayEntryRejected = true
+   log("CARRY_DIAG","Le serveur refuse l entree gameplay malgre la position locale : arret sans renvoi")
 			ctx.preciseRadius = 1.5
 		end
 		if not ok or accepted ~= true then
@@ -1886,6 +1907,7 @@ function FusionModules.BatCombat.Step()
   state.EquippedByScript=true
  end
  if tool.Parent~=character or now<state.NextSwingAt or isSafe(root.Position)==true then return end
+ if not FusionModules.Helpers.GameplayEntryAllowed()then state.Stop();return end
  -- Respect the authoritative replicated cooldown, including a previous manual click.
  local cooldownEnd=tool:GetAttribute("CooldownEndTime")
  if type(cooldownEnd)=="number"and Workspace:GetServerTimeNow()<cooldownEnd then return end
@@ -2447,6 +2469,40 @@ local function moveActivity(destination, token, interruptForEgg, nextDestination
 		previous = current
 		RunService.Heartbeat:Wait()
 	end
+end
+
+-- Cross the real separator using native walking, then let the local game guard
+-- stay valid across several frames. No position/velocity/attribute writes.
+function FusionModules.Helpers.EnterGameplay(token)
+ local character,humanoid,root=getCharacterParts()
+ local line=getSeparationLine()
+ if not line or not root or not humanoid then return false,"ligne ou personnage absent"end
+ local allowed=FusionModules.Helpers.GameplayEntryAllowed()
+ if not allowed then
+  local localPoint=line.CFrame:PointToObjectSpace(root.Position)
+  local half=math.max(0,line.Size.X*.5-6)
+  local plane=line.CFrame:PointToWorldSpace(Vector3.new(math.clamp(localPoint.X,-half,half),0,-(line.Size.Z*.5+8)))
+  local destination=Vector3.new(plane.X,root.Position.Y,plane.Z)
+  local deadline=os.clock()+math.clamp(distanceXZ(root.Position,destination)/math.max(humanoid.WalkSpeed,1)*3+4,5,20)
+  setStatus("Franchissement a pied de l entree gameplay...")
+  local nextMove=0
+  repeat
+   if not activityValid(token,character)or FusionModules.CollectionReturnPending then return false,"entree annulee"end
+   if motionBlockReason({character=character})then return false,"personnage immobilise a l entree"end
+   if os.clock()>=nextMove then humanoid:MoveTo(destination);nextMove=os.clock()+.2 end
+   RunService.Heartbeat:Wait()
+   allowed=FusionModules.Helpers.GameplayEntryAllowed()
+  until allowed or os.clock()>=deadline
+  if not allowed then return false,"franchissement natif non confirme"end
+ end
+ local stableUntil=os.clock()+.35
+ repeat
+  if not activityValid(token,character)or FusionModules.CollectionReturnPending then return false,"entree annulee"end
+  local ok,why=FusionModules.Helpers.GameplayEntryAllowed()
+  if not ok then return false,why end
+  RunService.Heartbeat:Wait()
+ until os.clock()>=stableUntil
+ return true
 end
 
 -- Serialize treadmill requests, including late replies after a timeout.
@@ -3520,7 +3576,13 @@ local function worker(token)
 				if not reached then if FusionModules.CollectionReturnPending then directNext=false;continue end;stopAutomation("StartArea : " .. tostring(reason)); return end
 			end
 			if not autoEnabled or generation ~= token then return end
-			autoActivity = "FARM"
+			local entered,entryReason=true,nil
+   if not recovering then entered,entryReason=FusionModules.Helpers.EnterGameplay(token)end
+   if not entered then
+    if FusionModules.CollectionReturnPending then continue end
+    stopAutomation("Entree gameplay non confirmee : "..tostring(entryReason));return
+   end
+   autoActivity = "FARM"
 			log("FARM_START", "UID=%s : sortie StartArea atteinte, trajet vers l'oeuf", selected.Uid)
 			directNext = false
 			local success, reason = measureAction("VOL_COMPLET", runCycle, selected, rate, recovering, selectBest)
@@ -3538,7 +3600,7 @@ local function worker(token)
 			if not success then
     if FusionModules.CollectionReturnPending then directNext=false;continue end
 				if reason == "GAMEPLAY_ENTRY_REQUIRED" then
-					stopAutomation("Prise refusee : entre manuellement dans la zone de jeu puis relance la collecte.")
+					stopAutomation("Le serveur refuse l entree en zone de jeu : collecte suspendue, aucune nouvelle prise envoyee. Verifie un passage manuel.")
 					return
 				end
 				log("CYCLE_FAILED", "UID=%s Raison=%s", selected.Uid, tostring(reason))
@@ -3661,6 +3723,7 @@ local function initialize()
 	AssetEarnings = loadModule("Shared.Util.AssetEarnings")
 	SlotIdentity = loadModule("Shared.Util.AreaEggSlotIdentity")
 	GuardGeometry = loadModule("Shared.Util.GuardAreaGeometry")
+ FusionModules.GameplayGuard=loadModule("Client.ToolGameplayGuard")
 	Save = loadModule("Shared.Save")
 	PlotState = loadModule("Client.PlotState")
 	AssetRoster = loadModule("Client.AssetRoster")
