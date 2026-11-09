@@ -95,6 +95,8 @@ function FusionModules.Helpers.InIncomeRange(key,rate)
   and rate>=FusionModules.Options[key.."Min"]and rate<=FusionModules.Options[key.."Max"]
 end
 
+FusionModules.Options.AutoPlotUpgrade=false
+FusionModules.Options.AutoTreadmillUpgrade=false
 FusionModules.Options.AutoHelp=false
 FusionModules.Options.AutoHelpMin=2e9
 FusionModules.Options.HelpFavorites=""
@@ -344,7 +346,7 @@ local function loadSettings()
 		minimumRatePerSecond = minimum * 1e9
 	end
  for key,value in pairs(FusionModules.Options)do
-  if type(value)=="boolean"and key~="AutoHelp"and key~="AutoMutations"and key~="AutoSellAnimals"and not key:match("^Mutation")then FusionModules.Options[key]=automaticMode end
+  if type(value)=="boolean"and key~="AutoPlotUpgrade"and key~="AutoTreadmillUpgrade"and key~="AutoHelp"and key~="AutoMutations"and key~="AutoSellAnimals"and not key:match("^Mutation")then FusionModules.Options[key]=automaticMode end
  end
  FusionModules.Options.AutoEggsMin=minimumRatePerSecond
  FusionModules.Options.AutoSellMax=minimumRatePerSecond
@@ -3121,7 +3123,12 @@ local function serviceWallMaintenance(token)
 	if not root or isSafe(root.Position) ~= true then return end
 	wallMaintenancePending = false
 	lastMaintenanceAt = os.clock()
-	-- Fill available spots before mutation retries can defer the rest of maintenance.
+	if FusionModules.AdminRuntime then
+  local runtime=FusionModules.AdminRuntime
+  if runtime.ProgressPending and runtime.ProgressPending()then return end
+  if runtime.ProgressNext and runtime.ProgressNext(false)then return end
+ end
+ -- Fill available spots before mutation retries can defer the rest of maintenance.
 	placeInventoryEggs(nil,token,0)
 	if destroyed or not autoEnabled or generation~=token or queuePaused or placementRequest or FusionModules.YieldToSpawnedEggs() then return end
 	if FusionModules.Options.AutoMutations and FusionModules.Reporting.ClientKind=="admin" then
@@ -3212,6 +3219,8 @@ function FusionModules.Butterflies.Idle(token)
   local present,net=b.Available()
   if not present then break end
   if net.Parent~=character then humanoid:EquipTool(net) end
+  local runtime=FusionModules.AdminRuntime
+  if runtime and runtime.ProgressNext then runtime.ProgressNext(true)end
   task.wait(CONFIG.ScanInterval)
  end
  log("ACTION","Collecte des papillons terminee")
@@ -5124,6 +5133,11 @@ shared.__AutoSAEController = {Destroy = destroy, Gui = gui, Reporting = FusionMo
    return tostring(lastStatusText or autoActivity or"En attente").." · "..reason..(FusionModules.InventoryNotice and" · "..FusionModules.InventoryNotice or"")
   end,
   MutationLock=function(value)FusionModules.MutationBusy=value==true end,
+  CanProgression=function()
+   if destroyed or not ready or not automaticMode or not autoEnabled or queuePaused or stopAfterFlight or currentCycle or serverHopPending or FusionModules.Pending()or inventoryPlacementBusy or placementRequest or hatchInProgress then return false end
+   local carry=readCarry();if not carry or carry.IsCarrying then return false end
+   return not FusionModules.YieldToSpawnedEggs()
+  end,
   CanMutate=function()return not destroyed and ready and automaticMode and autoEnabled and not queuePaused and not currentCycle and not serverHopPending and not FusionModules.Pending() and not inventoryPlacementBusy and not placementRequest and not hatchInProgress end,
   Busy=function()return destroyed or autoEnabled or currentCycle~=nil or inventoryPlacementBusy or placementRequest~=nil or hatchInProgress or FusionModules.Pending() or serverHopPending end,
   Countdown=FusionModules.Helpers.PlotEggCountdown, FindSpot=findPlotEggSpot, AcknowledgeReward=FusionModules.AcknowledgeReward,

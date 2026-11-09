@@ -298,6 +298,97 @@ return function(ctx)
   end
   assert(ok,reason);return true
  end
+ -- Cash upgrades and butterfly crafting share one request slot across reloads.
+ local progression=shared.__SEAProgressionState
+ if type(progression)~="table"or progression.UserId~=player.UserId then
+  progression={UserId=player.UserId,RetryAt={}};shared.__SEAProgressionState=progression
+ end
+ function A.ProgressPending()return progression.Pending~=nil end
+ local function progressionNotice(text)
+  if ctx.InventoryNotice then ctx.InventoryNotice(text)end
+ end
+ local function progressionModules()
+  if A.ProgressModules then return A.ProgressModules end
+  local function find(path)
+   local node=RS;for name in path:gmatch("[^.]+")do node=node and node:FindFirstChild(name)end
+   assert(node,"Module progression absent : "..path);return require(node)
+  end
+  local modules={Base=find("Client.BaseUpgrade"),Treadmill=find("Controllers.GUI.TreadmillUpgradeController.Client"),Butterflies=find("Shared.Modules.ButterflyCatalog"),ButterflyFlags=find("Shared.Flags.ButterflyFlags")}
+  A.ProgressModules=modules;return modules
+ end
+ local function progressNextImpl(craftOnly)
+  if A.Destroyed or not A.Initialized or A.Busy or shared.__SEAAdminRequestLock or progression.Pending or A.ManualPending or not ctx.CanProgression or not ctx.CanProgression()then return false end
+  if progression.Unknown then
+   if safe(progression.Unknown.confirm)then progression.Unknown=nil
+   else progressionNotice("Upgrade/Craft incertain : attente de confirmation, aucun renvoi");return false end
+  end
+  local options=ctx.GetOptions()
+  if not options.AutoPapillon and(craftOnly or not options.AutoPlotUpgrade and not options.AutoTreadmillUpgrade)then return false end
+  if os.clock()<(A.ProgressModuleRetryAt or 0)then return false end
+  local ok,mods=pcall(progressionModules)
+  if not ok then A.ProgressModuleRetryAt=os.clock()+30;progressionNotice(tostring(mods));return false end
+  if mods.Base.Transition and mods.Base.Transition.IsPlaying()then return false end
+  local p=profile();local kind,dispatch,confirm
+  local function ready(id)return os.clock()>=(progression.RetryAt[id]or 0)end
+  if not craftOnly and options.AutoPlotUpgrade and ready("plot")and mods.Base.IsNextTierAffordable(p)then
+   local before=p.BaseUpgradeLevel
+   kind="plot";dispatch=mods.Base.PurchaseNextTier
+   confirm=function()return profile().BaseUpgradeLevel>before end
+  elseif not craftOnly and options.AutoTreadmillUpgrade and ready("treadmill")and(p.BaseUpgradeLevel or 0)>0 and mods.Treadmill.CanAffordNext(p)then
+   local before=p.TreadmillUpgradeLevel
+   kind="treadmill";dispatch=mods.Treadmill.RequestCashUpgrade
+   confirm=function()return profile().TreadmillUpgradeLevel>before end
+  elseif options.AutoPapillon and ready("craft")and mods.ButterflyFlags.Enabled:Get()then
+   local counts=p.Butterflies and p.Butterflies.Counts
+   local recipe=mods.Butterflies.EssenceRecipe();local enough=type(counts)=="table";local total=0
+   for _,id in ipairs({"Green","Blue","Purple","Golden"})do
+    local cost=metric(recipe[id]);local stock=counts and metric(counts[id])
+    if not cost or cost%1~=0 or not stock or stock<cost then enough=false end
+    total+=cost or 0
+   end
+   if enough and total>0 then
+    local essenceBefore=mutationTools().Enchanted.count
+    kind="craft";dispatch=function()return A.Remotes.Butterflies.AskCraftEssence:InvokeServer()end
+    confirm=function()
+     -- The net can catch more butterflies while the response replicates.
+     -- The native positive reply plus the granted consumable confirms the craft.
+     return mutationTools().Enchanted.count>essenceBefore
+    end
+   end
+  end
+  if not kind or not ctx.CanProgression()then return false end
+  local lock={progression=kind};local request={kind=kind,confirm=confirm};progression.Pending=request
+  A.Busy=true;A.ProgressBusy=true;shared.__SEAAdminRequestLock=lock
+  progressionNotice(kind=="craft"and"Craft Enchanted Essence en cours"or"Upgrade "..kind.." en cours")
+  task.spawn(function()
+   local accepted,why
+   local completed,err=pcall(function()
+    if A.Destroyed or not ctx.CanProgression()then accepted=false;why="Priorite au vol ou AUTO arrete";return end
+    local permitted=ctx.GetOptions()
+    if kind=="plot"and not permitted.AutoPlotUpgrade or kind=="treadmill"and not permitted.AutoTreadmillUpgrade or kind=="craft"and not permitted.AutoPapillon then accepted=false;return end
+    accepted,why=dispatch()
+    if accepted==true then
+     if waitUntil(confirm,10)then progressionNotice(kind=="craft"and"Craft confirme : Enchanted Essence ajoutee"or"Upgrade "..kind.." confirme")
+     else progression.Unknown=request;progressionNotice("Upgrade/Craft accepte, confirmation en attente : aucun renvoi")end
+    else progressionNotice("Upgrade/Craft refuse : "..tostring(why or accepted))end
+   end)
+   if not completed then
+    if not safe(confirm)then progression.Unknown=request end
+    progressionNotice("Upgrade/Craft incertain : "..tostring(err))
+   end
+   progression.RetryAt[kind]=os.clock()+(accepted==true and not progression.Unknown and 2 or 30)
+   if progression.Pending==request then progression.Pending=nil end
+   A.Busy=false;A.ProgressBusy=false;if shared.__SEAAdminRequestLock==lock then shared.__SEAAdminRequestLock=nil end
+   pcall(A.Publish,true)
+  end)
+  return true
+ end
+ function A.ProgressNext(craftOnly)
+  if os.clock()<(A.ProgressErrorRetryAt or 0)then return false end
+  local ok,result=pcall(progressNextImpl,craftOnly)
+  if not ok then A.ProgressErrorRetryAt=os.clock()+30;progressionNotice("Progression indisponible : "..tostring(result));return false end
+  return result
+ end
  function A.SellAnimals()
   if A.Destroyed or not A.Initialized or A.Busy or shared.__SEAAdminRequestLock or not ctx.CanMutate()then return 0 end
   local options=ctx.GetOptions();if not options.AutoSellAnimals then return 0 end
@@ -416,7 +507,7 @@ return function(ctx)
    for _,signal in ipairs({A.EggState.OwnerRefreshed,A.EggState.SnapshotRefreshed})do
     if signal then table.insert(A.Connections,signal:Connect(dirty))end
    end
-   if type(A.Save.Watch)=="function"then for _,key in ipairs({"EggInventory","Inventory","EquippedAssets"})do local signal=A.Save.Watch(key);if signal then table.insert(A.Connections,signal:Connect(dirty))end end end
+   if type(A.Save.Watch)=="function"then for _,key in ipairs({"EggInventory","Inventory","EquippedAssets","Money","BaseUpgradeLevel","TreadmillUpgradeLevel","Butterflies"})do local signal=A.Save.Watch(key);if signal then table.insert(A.Connections,signal:Connect(dirty))end end end
   end)
   if not ok then warn("[SEA Admin] "..tostring(why));return end
   while not A.Destroyed and ctx.Ready()do
