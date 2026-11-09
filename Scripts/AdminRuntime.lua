@@ -496,7 +496,7 @@ return function(ctx)
    send(result);pcall(A.Publish,true)
   end)
  end
- function A.Destroy()A.Destroyed=true;releaseMutationTool();for _,c in ipairs(A.Connections or{})do c:Disconnect()end;if not ctx.LocalOnly then ctx.Report.AdminReceive=nil end end
+ function A.Destroy()A.Destroyed=true;if A.IndexRewards then A.IndexRewards.Destroy()end;releaseMutationTool();for _,c in ipairs(A.Connections or{})do c:Disconnect()end;if not ctx.LocalOnly then ctx.Report.AdminReceive=nil end end
  if not ctx.LocalOnly then ctx.Report.AdminReceive=A.Receive end
  task.spawn(function()
   while not A.Destroyed and not ctx.Ready()do task.wait(.5)end
@@ -523,6 +523,36 @@ return function(ctx)
    if type(A.Save.Watch)=="function"then for _,key in ipairs({"EggInventory","Inventory","EquippedAssets","BaseUpgradeLevel","TreadmillUpgradeLevel"})do local signal=A.Save.Watch(key);if signal then table.insert(A.Connections,signal:Connect(dirty))end end end
   end)
   if not ok then warn("[SEA Admin] "..tostring(why));return end
+  task.spawn(function()
+   local loaded,problem=pcall(function()
+    local function optional(path)return safe(module,path)end
+    local limited=optional("Data.LimitedEgg")or{}
+    local luminous=optional("Data.LuminousEgg")or{}
+    local monster=optional("Data.MonsterEgg")or{}
+    local brainrot=optional("Data.BrainrotEgg")or{}
+    local scramble=optional("Data.ScrambleTradeIn")or{}
+    local schedule=optional("Shared.Util.RiftMachineSchedule")
+    local function entries(...)
+     local all={};for _,rows in ipairs({...})do for _,row in ipairs(rows or{})do table.insert(all,row)end end;return all
+    end
+    local function collections()
+     local extinction=limited.Extinction or{}
+     local all={{id="LimitedEgg",gear="GravityDisruptor",entries=entries(extinction.Entries or{},extinction.MechaReroll and extinction.MechaReroll.Entries or{})},
+      {id="BrainrotEgg",gear="BeeLauncher",entries=brainrot.Entries or{}},
+      {id="MonsterEgg",gear="BeeLauncher",entries=entries(monster.Entries or{},monster.MechaEntries or{})}}
+     if workspace:GetServerTimeNow()>=(A.Constants.UPDATE_LIVE_AT or math.huge)then table.insert(all,{id="LuminousEgg",gear="GravityDisruptor",entries=entries(luminous.Entries or{},luminous.MechaEntries or{})})end
+     if schedule and safe(schedule.IsLaboratoryTime)then
+      local rows={};for _,banner in ipairs(scramble.Banners or{})do for _,entry in ipairs(banner.Pets or{})do table.insert(rows,entry)end end
+      table.insert(all,{id="DrScramble",gear="Scramble Sword",entries=rows})
+     end
+     return all
+    end
+    local run,why=loadstring(game:HttpGet("https://raw.githubusercontent.com/cagnastylepay-png/SEA_V2/main/Scripts/IndexRewards.lua"),"SEA_V2/IndexRewards")
+    assert(run,why)
+    if not A.Destroyed then A.IndexRewards=run()({Save=A.Save,Assets=A.Assets,Remotes=A.Remotes,Collections=collections})end
+   end)
+   if not loaded and not A.Destroyed then warn("[SEA Index] "..tostring(problem))end
+  end)
   while not A.Destroyed and ctx.Ready()do
    local sent,reason=pcall(A.Publish,false);if not sent then warn("[SEA Admin] Snapshot : "..tostring(reason))end
    task.wait(5)
