@@ -95,6 +95,17 @@ function FusionModules.Helpers.InIncomeRange(key,rate)
   and rate>=FusionModules.Options[key.."Min"]and rate<=FusionModules.Options[key.."Max"]
 end
 
+FusionModules.Options.AutoHelp=false
+FusionModules.Options.AutoHelpMin=2e9
+FusionModules.Options.HelpFavorites=""
+function FusionModules.Helpers.ValidHelpFavorites(value)
+ if type(value)~="string"or #value>1100 then return false end
+ local count=0
+ for name in value:gmatch("[^,%s;]+")do
+  count+=1;if count>50 or #name<3 or #name>20 or name:find("[^%w_]")then return false end
+ end
+ return true
+end
 FusionModules.Options.AutoMutations=false
 FusionModules.Options.AutoSellAnimals=false
 FusionModules.Options.AutoSellAnimalsMin=0
@@ -108,7 +119,9 @@ end
 function FusionModules.Helpers.SetOption(key,value)
  local current=FusionModules.Options[key]
  if current==nil then return false,"Parametre inconnu"end
- if type(current)=="boolean"then
+ if key=="HelpFavorites"then
+  if not FusionModules.Helpers.ValidHelpFavorites(value)then return false,"Favoris invalides"end
+ elseif type(current)=="boolean"then
   if type(value)~="boolean"then return false,"Interrupteur invalide"end
  else
   if type(value)~="number"or value~=value or value<0 or value>=math.huge then return false,"Revenu invalide"end
@@ -136,6 +149,7 @@ function FusionModules.Helpers.RestoreOptions(saved)
  end
  if candidate.AutoEggsMin>candidate.AutoEggsMax or candidate.AutoSellMin>candidate.AutoSellMax or candidate.AutoOpenMin>candidate.AutoOpenMax or candidate.AutoPlaceMin>candidate.AutoPlaceMax or candidate.AutoFuseMin>candidate.AutoFuseMax then return false end
  if candidate.AutoSellAnimalsMin>candidate.AutoSellAnimalsMax then return false end
+ if not FusionModules.Helpers.ValidHelpFavorites(candidate.HelpFavorites)then return false end
  for _,id in ipairs({"Boss","Scrambled","Enchanted","Nitro","Spectral","Musical","Alien","DarkMatter"})do local n=candidate["Mutation"..id.."Attempts"];if n%1~=0 or n<1 or n>100 then return false end end
  FusionModules.Options=candidate
  minimumRatePerSecond=candidate.AutoEggsMin;autoIncludeMissingIndex=candidate.AutoIndex;automaticMode=true
@@ -145,7 +159,7 @@ end
 FusionModules.Busy = false
 FusionModules.Request = shared.__AutoSAEFusionRequest
 function FusionModules.Pending()
-	return FusionModules.ManualBusy or FusionModules.MutationBusy or FusionModules.Busy or (FusionModules.Request and not FusionModules.Request.done)
+	return FusionModules.ManualBusy or FusionModules.MutationBusy or FusionModules.Busy or (FusionModules.Request and not FusionModules.Request.done)or(FusionModules.Help and FusionModules.Help.DropRequest and not FusionModules.Help.DropRequest.done)
 end
 local EggSaleRemote
 local GameplayBalance
@@ -286,6 +300,7 @@ function executorTools.SaveSettings()
 		VisitedPlaceId = game.PlaceId, VisitedServers = visitedServers,
 		VisitedCycleIndex = visitedCycleIndex,
 		TimingEnabled = timingEnabled,
+  HelpDelivered = shared.__SEAHelpDelivered,
 		MinimumBillions = minimumRatePerSecond / 1e9,
 	})
 	if json == lastSettingsJSON then return true, settingsPath end
@@ -321,12 +336,15 @@ local function loadSettings()
 	end
 	-- Detailed telemetry disabled.
 
-	local minimum = settings.MinimumBillions
+	if type(settings.HelpDelivered)=="table"then
+  for key,state in pairs(settings.HelpDelivered)do if type(key)=="string"and #key<160 and(state=="pending"or state=="confirmed")then shared.__SEAHelpDelivered[key]=state end end
+ end
+ local minimum = settings.MinimumBillions
 	if type(minimum) == "number" and minimum == minimum and minimum >= MINIMUM_BILLIONS and minimum <= MAXIMUM_BILLIONS then
 		minimumRatePerSecond = minimum * 1e9
 	end
  for key,value in pairs(FusionModules.Options)do
-  if type(value)=="boolean"and key~="AutoMutations"and key~="AutoSellAnimals"and not key:match("^Mutation")then FusionModules.Options[key]=automaticMode end
+  if type(value)=="boolean"and key~="AutoHelp"and key~="AutoMutations"and key~="AutoSellAnimals"and not key:match("^Mutation")then FusionModules.Options[key]=automaticMode end
  end
  FusionModules.Options.AutoEggsMin=minimumRatePerSecond
  FusionModules.Options.AutoSellMax=minimumRatePerSecond
@@ -774,6 +792,7 @@ local function recordFlightResult(ctx, succeeded)
 	if ctx.resultLogged then return end
 	ctx.resultLogged = true
 	local text = string.format('Vol de "%s" %s | %s', getAnimalName(ctx.record or {}), succeeded and "Reussi" or "Echoue",FusionModules.Helpers.DescribeEgg(ctx.record))
+ if ctx.help then text="[AIDE Forest] "..text end
 	table.insert(flightHistory, {Text=text, Success=succeeded})
 	if #flightHistory > 200 then table.remove(flightHistory, 1) end
 	log("FLIGHT_RESULT", "%s", text)
@@ -1358,7 +1377,8 @@ local function approachEgg(ctx, destination)
 			if not active then return end
 			local valid, reason = validCycle(ctx)
 			if not valid then complete(false, reason); return end
-			local blocked = motionBlockReason(ctx)
+			if ctx.help and FusionModules.Help.HasNormal()then complete(false,"HELP_PRIORITY");return end
+   local blocked = motionBlockReason(ctx)
 			if blocked then
 				if not pausedAt then
 					pausedAt = os.clock()
@@ -1681,7 +1701,7 @@ local function moveReturnLoop(ctx, destination)
 				local nextEgg = ctx.findNext()
 				if nextEgg and nextEgg.Uid ~= ctx.uid then return false, "NEXT_AVAILABLE" end
 			end
-		elseif carryWasLost(ctx) then
+		elseif not ctx.helpReturning and carryWasLost(ctx) then
 			return false, CARRY_LOST
 		end
 		if motionBlockReason(ctx) then
@@ -1693,8 +1713,8 @@ local function moveReturnLoop(ctx, destination)
 		local now = os.clock()
 		distance = distanceXZ(root.Position, destination)
 		local insideSafe = isSafe(root.Position) == true
-		local arrivalRadius = CONFIG.ReturnDistance
-		if insideSafe then
+		local arrivalRadius = ctx.help and not ctx.helpReturning and 3 or CONFIG.ReturnDistance
+		if insideSafe and not ctx.help then
 			humanoid.Jump = false
 			local velocity = root.AssemblyLinearVelocity
 			local horizontalSpeed = Vector2.new(velocity.X, velocity.Z).Magnitude
@@ -1713,7 +1733,7 @@ local function moveReturnLoop(ctx, destination)
 		if distance <= arrivalRadius then
 			log("RETURN_BRAKE_ZONE", "Distance=%.2f Rayon=%.2f Safe=%s", distance, arrivalRadius, tostring(insideSafe))
 			local braked, brakeReason = brakeAtArrival(ctx, destination, arrivalRadius, true)
-			if carryWasLost(ctx) then return false, CARRY_LOST end
+			if not ctx.helpReturning and carryWasLost(ctx) then return false, CARRY_LOST end
 			if braked then return true end
 			if not validCycle(ctx) then return false, brakeReason end
 			lastCommand, lastMoved = -math.huge, os.clock()
@@ -1882,6 +1902,70 @@ local function getStartAreaDestination()
 	return center + Vector3.new(0, (humanoid and humanoid.HipHeight or 2) + 2, 0)
 end
 
+-- Help favorites only authorize assistance; they never receive Admin privileges or GO.
+FusionModules.Help={DropRequest=shared.__SEAHelpDropRequest}
+shared.__SEAHelpDelivered=shared.__SEAHelpDelivered or{}
+shared.__SEAHelpActive=shared.__SEAHelpActive or{}
+FusionModules.Help.Delivered=shared.__SEAHelpDelivered
+FusionModules.Help.Active=shared.__SEAHelpActive
+function FusionModules.Help.Key(uid)return tostring(game.JobId)..":"..tostring(uid)end
+function FusionModules.Help.WasDelivered(uid)return FusionModules.Help.Delivered[FusionModules.Help.Key(uid)]~=nil end
+function FusionModules.Help.Present()
+ if not FusionModules.Options.AutoHelp or FusionModules.Reporting.ClientKind~="admin"then return false end
+ local names={};for name in FusionModules.Options.HelpFavorites:gmatch("[^,%s;]+")do names[name:lower()]=true end
+ for _,other in ipairs(Players:GetPlayers())do if other~=player and names[other.Name:lower()]then return true end end
+ return false
+end
+function FusionModules.Help.Eligible(record)
+ if not record or FusionModules.Help.WasDelivered(record.Uid)or not FusionModules.Help.Present()then return false end
+ local rate=getRatePerSecond(record)
+ if type(rate)~="number"or rate~=rate or rate<FusionModules.Options.AutoHelpMin or rate>=FusionModules.Options.AutoEggsMin then return false end
+ local ok,p=pcall(Save.Peek)
+ -- An unknown index or a missing species is always reserved for the Admin.
+ if not ok or type(p)~="table"or type(p.Index)~="table"or p.Index[record.AssetCategory]~=true then return false end
+ if FusionModules.Options.AutoEggs and FusionModules.Helpers.IsAlwaysEligibleRarity(record)then return false end
+ return true
+end
+function FusionModules.Help.HasNormal()
+ syncQueue()
+ for uid,entry in pairs(queuedEggs)do if entry.Source~="HELP"and(not currentCycle or uid~=currentCycle.uid)and(cooldowns[uid]or 0)<=os.clock()then return true end end
+ return false
+end
+function FusionModules.Help.Destination()
+ local w=Workspace:FindFirstChild("World");local a=w and w:FindFirstChild("Areas");local g=a and a:FindFirstChild("GuardAreas");local f=g and g:FindFirstChild("Forest")
+ local bounds=f and f:FindFirstChild("Bounds")
+ if not bounds or not bounds:IsA("BasePart")then return nil end
+ local _,humanoid=getCharacterParts()
+ return bounds.Position+Vector3.new(0,(humanoid and humanoid.HipHeight or 2)+2,0)
+end
+function FusionModules.Help.Deposit(ctx,destination)
+ if FusionModules.Help.WasDelivered(ctx.uid)then return false,"Depot deja envoye : aucun renvoi"end
+ local carry=readCarry();local _,_,root=getCharacterParts()
+ if not validCycle(ctx)or not root or distanceXZ(root.Position,destination)>5 or isSafe(root.Position)~=false or not carry or not carry.IsCarrying or carry.Uid~=ctx.uid then return false,"Depot Forest indisponible"end
+ local key=FusionModules.Help.Key(ctx.uid)
+ FusionModules.Help.Delivered[key]="pending";executorTools.SaveSettings()
+ local request={done=false};FusionModules.Help.DropRequest=request;shared.__SEAHelpDropRequest=request
+ task.spawn(function()request.ok,request.accepted,request.reason=pcall(EggState.DropFieldEgg,"PlayerRequest");request.done=true end)
+ local deadline=os.clock()+CONFIG.RequestTimeout
+ while not request.done and validCycle(ctx)and os.clock()<deadline do RunService.Heartbeat:Wait()end
+ if not request.done then return false,"Depot en attente : aucun nouvel envoi"end
+ if not request.ok or request.accepted~=true then
+  if request.ok then FusionModules.Help.Delivered[key]=nil;executorTools.SaveSettings()end
+  return false,"Depot refuse ou incertain : "..tostring(request.reason or request.accepted)
+ end
+ deadline=os.clock()+5
+ repeat
+  carry=readCarry();local record,readOK=readField(ctx.uid);local position=record and getRecordPosition(record)
+  if carry and not carry.IsCarrying and readOK and record and record.State=="Dropped"and record.CarrierUserId==nil and position and distanceXZ(position,destination)<=15 then
+   FusionModules.Help.Delivered[key]="confirmed";FusionModules.Help.Active[key]=nil;executorTools.SaveSettings()
+   setStatus("AIDE : oeuf depose dans Forest")
+   return true
+  end
+  RunService.Heartbeat:Wait()
+ until not validCycle(ctx)or os.clock()>=deadline
+ return false,"Depot accepte, confirmation terrain en attente : aucun renvoi"
+end
+
 local function runCycle(record, rate, recovering, findNext)
 	local character, humanoid, root = getCharacterParts()
 	if not character or not humanoid or not root then return false, "personnage absent" end
@@ -1892,7 +1976,11 @@ local function runCycle(record, rate, recovering, findNext)
 	if not safeHome or isSafe(safeHome) ~= true then
 		return false, "position de retour sure non disponible"
 	end
-	local ctx = {
+	local help=(queuedEggs[record.Uid]and queuedEggs[record.Uid].Source=="HELP")or(recovering==true and FusionModules.Help.Active[FusionModules.Help.Key(record.Uid)]==true)
+ local helpDestination=help and FusionModules.Help.Destination()
+ if help and not helpDestination then return false,"Centre Forest introuvable"end
+ local ctx = {
+  help=help,
 		uid = record.Uid, record = record, generation = generation, character = character, findNext = findNext,
 		startedAt = os.clock(), phaseStartedAt = os.clock(),
 		home = safeHome, eggPosition = record.BottomCFrame and record.BottomCFrame.Position,
@@ -1904,6 +1992,7 @@ local function runCycle(record, rate, recovering, findNext)
 	ctx.movementLock = {Owner = "Auto_SAE", Character = character, Generation = generation}
 	shared.__AutoSAEMovementLock = ctx.movementLock
 	currentCycle = ctx
+ if help then FusionModules.Help.Active[FusionModules.Help.Key(record.Uid)]=true end
  log("ACTION",'Vol de "%s" en cours | %s',getAnimalName(record),FusionModules.Helpers.DescribeEgg(record))
 	log("TARGET", "Animal=%s Revenu=%s/s Home=%s Recovery=%s",
 		getAnimalName(record), formatNumber(rate or 0), FusionModules.Helpers.formatPosition(ctx.home), tostring(recovering))
@@ -1924,7 +2013,20 @@ local function runCycle(record, rate, recovering, findNext)
 		if not grabbed and inFlightRequest and not inFlightRequest.done then
 			return false, grabReason or "requete serveur encore en cours"
 		end
-		ctx.hadCarry = grabbed == true
+		if ctx.help then
+   if grabbed then
+    local delivered,why=moveReturnLoop(ctx,helpDestination)
+    if not delivered then return false,why end
+    delivered,why=FusionModules.Help.Deposit(ctx,helpDestination)
+    if not delivered then return false,why end
+   end
+   ctx.helpReturning=true;ctx.watchForReappearance=false
+   local returned,why=moveReturnLoop(ctx,ctx.home)
+   if not returned then return false,why end
+   if not grabbed then FusionModules.Help.Active[FusionModules.Help.Key(ctx.uid)]=nil;return false,"NEXT_AVAILABLE"end
+   return true
+  end
+  ctx.hadCarry = grabbed == true
 		ctx.watchForReappearance = not grabbed
 		if not grabbed then log("TARGET_RETURN_EMPTY", "UID=%s : retour en surveillant sa reapparition", ctx.uid) end
 		while validCycle(ctx) do
@@ -2005,6 +2107,7 @@ function FusionModules.Helpers.QueueDistance(record,position)
  return distanceXZ(record.BottomCFrame.Position,position)
 end
 function FusionModules.Helpers.QueueBefore(a,b)
+ if (a.Source=="HELP")~=(b.Source=="HELP")then return a.Source~="HELP"end
  if FusionModules.Options.QueueNearest and a.Distance~=b.Distance then return a.Distance<b.Distance end
  if a.Rate~=b.Rate then return a.Rate>b.Rate end
  if a.Distance~=b.Distance then return a.Distance<b.Distance end
@@ -2058,7 +2161,8 @@ end
 
 local function enqueueEgg(record, source)
 	if type(record) ~= "table" or type(record.Uid) ~= "string" then return false end
-	local function reject(reason)
+	if FusionModules.Help.WasDelivered(record.Uid)then return false end
+ local function reject(reason)
 		if source == "AUTO" or source == "RARITY" then logQueueDecision(record.Uid, reason) end
 		return false
 	end
@@ -2091,7 +2195,8 @@ syncQueue = function()
 	for uid, entry in pairs(queuedEggs) do
 		if not currentCycle or currentCycle.uid ~= uid then
 			local record = readField(uid)
-			if not record or ownsEgg(uid) or not isTrackedFieldState(record)
+			if not record or ownsEgg(uid) or not isTrackedFieldState(record)or FusionModules.Help.WasDelivered(uid)
+    or(entry.Source=="HELP"and not FusionModules.Help.Eligible(record))
 				or (entry.Source == "INDEX" and (not FusionModules.Options.AutoIndex or plotCategories[record.AssetCategory]))
     or ((entry.Source=="AUTO"or entry.Source=="RARITY")and not FusionModules.Options.AutoEggs)
     or (entry.Source=="AUTO"and ((getRatePerSecond(record)or 0)<FusionModules.Options.AutoEggsMin or (getRatePerSecond(record)or math.huge)>FusionModules.Options.AutoEggsMax))then
@@ -2144,7 +2249,10 @@ syncQueue = function()
 		end)
 		for _, record in ipairs(candidates) do enqueueEgg(record, "INDEX") end
 	end
-	local total, queued, above = 0, 0, 0
+	if FusionModules.Help.Present()then
+  for uid,record in pairs(records)do if not queuedEggs[uid]and FusionModules.Help.Eligible(record)then enqueueEgg(record,"HELP")end end
+ end
+ local total, queued, above = 0, 0, 0
 	for _, record in pairs(records) do
 		total += 1
 		if (getRatePerSecond(record) or 0) >= minimumRatePerSecond then above += 1 end
@@ -2211,7 +2319,7 @@ local function selectBest()
 				if rate == nil and FusionModules.Helpers.IsAlwaysEligibleRarity(latest) then rate = 0 end
 				if rate then
 					if uid==FusionModules.Arrival.Uid then return latest,rate end
-					local priority={Uid=uid,Rate=rate,Distance=FusionModules.Helpers.QueueDistance(latest,root and root.Position)}
+					local priority={Uid=uid,Source=entry.Source,Rate=rate,Distance=FusionModules.Helpers.QueueDistance(latest,root and root.Position)}
                     if not bestPriority or FusionModules.Helpers.QueueBefore(priority,bestPriority)then
                      best,bestRate,bestPriority=latest,rate,priority
                     end
