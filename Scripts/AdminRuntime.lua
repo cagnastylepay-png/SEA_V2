@@ -595,7 +595,7 @@ return function(ctx)
   elseif m.action=="egg.place"then return plant(uid)
   elseif m.action=="egg.sell"or m.action=="animal.sell"then
    local isEgg=m.action=="egg.sell"
-   if isEgg then local r=assert(ownedEggs()[uid],"Oeuf absent");assert(not r.Placement,"Oeuf place");assert(not ctx.CanSellEgg or ctx.CanSellEgg(r),"Les œufs Divins sont protégés")
+   if isEgg then local r=assert(ownedEggs()[uid],"Oeuf absent");assert(not r.Placement,"Oeuf place")
    else local item,saved=animal(uid);assert(item and saved and not equipped()[uid]and not saved.Locked,"Animal indisponible");assert(not table.find(profile().FusionSlots or{},uid),"Animal en fusion")end
    A.Dispatched=true;A.Remotes.PetSatchel.SellSelection:FireServer({Eggs=isEgg and{uid}or{},Assets=not isEgg and{uid}or{}})
    return waitUntil(function()return isEgg and ownedEggs()[uid]==nil or not isEgg and profile().Inventory[uid]==nil end,15)
