@@ -4377,6 +4377,10 @@ shared.__AutoSAEController = {Destroy = destroy, Gui = gui, Reporting = FusionMo
    if FusionModules.AdminRuntime and FusionModules.AdminRuntime.ManualPending then reason="Action manuelle en attente : priorite au vol"end
    return tostring(lastStatusText or autoActivity or"En attente").." · "..reason..(FusionModules.InventoryNotice and" · "..FusionModules.InventoryNotice or"")
   end,
+  FishingSaleCandidates=function()
+   if destroyed or not ready or not FusionModules.FishingBusy or not FusionModules.Options.AutoSell then return {} end
+   return FusionModules.Helpers.inventoryEggsBelowMinimum(inventoryEggRecords())
+  end,
   FishingLock=function(value)FusionModules.FishingBusy=value==true end,
   CanStartFishing=function()local carry=readCarry();return carry and not carry.IsCarrying and not treadmillPending and not treadmillAssigned and not(inFlightRequest and not inFlightRequest.done) end,
   IsEnabled=function()return automaticMode end,
