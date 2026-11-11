@@ -486,7 +486,26 @@ return function(ctx)
      assert(untilVisible(function()return visible("Reel")or visible("Reveal")end,30),"Aucune prise détectée")
      ctx.InventoryNotice("AutoFishing : essai "..attempt.." — prise détectée")
      fishingLog(prefix.."Prise détectée, attente du résultat")
-     assert(untilVisible(function()if visible("Reveal")then return true end;if visible("Reel")then click()end;return false end,15),"Résultat non affiché")
+     local clicks=0
+     local completed=untilVisible(function()
+      if visible("Reveal")then return true end
+      if visible("Reel")then
+       local camera=assert(workspace.CurrentCamera,"Caméra indisponible")
+       local point=camera.ViewportSize/2
+       move(math.floor(point.X),math.floor(point.Y))
+       A.ReleaseFishing=release
+       press()
+       task.wait(.03)
+       release()
+       A.ReleaseFishing=nil
+       clicks+=1
+       if clicks==1 or clicks%25==0 then
+        fishingLog(prefix..clicks.." clics envoyés")
+       end
+      end
+      return false
+     end,15)
+     assert(completed,"Résultat non affiché après "..clicks.." clics envoyés")
      fishingLog(prefix.."Résultat affiché")
      task.wait(1)
     end
