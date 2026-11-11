@@ -4378,7 +4378,6 @@ shared.__AutoSAEController = {Destroy = destroy, Gui = gui, Reporting = FusionMo
    if FusionModules.AdminRuntime and FusionModules.AdminRuntime.ManualPending then reason="Action manuelle en attente : priorite au vol"end
    return tostring(lastStatusText or autoActivity or"En attente").." · "..reason..(FusionModules.InventoryNotice and" · "..FusionModules.InventoryNotice or"")
   end,
-  CanSellEgg=function(record)return FusionModules.Reporting.ClientKind~="admin"or getRarityName(record)~="Divine"end,
   FishingSaleCandidates=function()
    if destroyed or not ready or not FusionModules.FishingBusy or not FusionModules.Options.AutoSell then return {} end
    return FusionModules.Helpers.inventoryEggsBelowMinimum(inventoryEggRecords())
