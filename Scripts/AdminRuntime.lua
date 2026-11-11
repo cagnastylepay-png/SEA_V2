@@ -215,7 +215,7 @@ return function(ctx)
   local income=metric(safe(A.Items.ProfileIncomePerSecond,player,p))
   local offline=A.Constants.OFFLINE_ASSETS or{}
   local duration,multiplier=metric(offline.MAX_DURATION_SECONDS),metric(offline.MONEY_RATE_MULTIPLIER)
-  return {eggs=eggs,animals=animals,imageCatalog=A.ImageCatalog,automationStatus=ctx.GetStatus and tostring(ctx.GetStatus()):sub(1,500)or nil,mutationConsumables=mutationMetadata(),mutationStatus=A.MutationStatus,stats={money=metric(p.Money),speedPower=metric(safe(A.Speed.ReadProjected))or metric(p.SpeedPower),
+  return {fishingEnabled=not ctx.LocalOnly and A.Fishing==true,eggs=eggs,animals=animals,imageCatalog=A.ImageCatalog,automationStatus=ctx.GetStatus and tostring(ctx.GetStatus()):sub(1,500)or nil,mutationConsumables=mutationMetadata(),mutationStatus=A.MutationStatus,stats={money=metric(p.Money),speedPower=metric(safe(A.Speed.ReadProjected))or metric(p.SpeedPower),
    incomePerSecond=income,offlinePerDay=income and duration and multiplier and income*duration*multiplier,
    offlineDurationSeconds=duration,offlineRateMultiplier=multiplier}}
  end
@@ -430,6 +430,62 @@ return function(ctx)
   if not ok then if ctx.InventoryNotice then ctx.InventoryNotice("Vente animaux incertaine, aucun renvoi : "..tostring(why))end;warn("[SEA Admin] Vente animaux : "..tostring(why))end
   pcall(A.Publish,true);return #ids
  end
+ local function stopFishing()
+  A.Fishing=false;A.FishingRun=nil
+  if A.ReleaseFishing then pcall(A.ReleaseFishing);A.ReleaseFishing=nil end
+  if ctx.FishingLock then ctx.FishingLock(false)end
+ end
+ function A.SetFishing(enabled)
+  assert(not ctx.LocalOnly and ctx.FishingLock and type(enabled)=="boolean","Mode pêche indisponible")
+  if not enabled then stopFishing();ctx.SetEnabled(true);return true end
+  if A.Fishing then return true end
+  local env=type(getgenv)=="function"and getgenv()or getfenv()
+  local move,press,release,click=env.mousemoveabs,env.mouse1press,env.mouse1release,env.mouse1click
+  assert(type(move)=="function"and type(press)=="function"and type(release)=="function"and type(click)=="function","Entrées souris indisponibles")
+  local gui=player:FindFirstChild("PlayerGui")
+  local function visible(name)
+   local ui=gui and gui:FindFirstChild("FishingUI")
+   local node=ui and ui:FindFirstChild(name,true)
+   if not node or not node:IsA("GuiObject")then return false end
+   while node do
+    if node:IsA("GuiObject")and not node.Visible or node:IsA("ScreenGui")and not node.Enabled then return false end
+    if node==gui then return true end
+    node=node.Parent
+   end
+   return false
+  end
+  local was=ctx.IsEnabled()
+  ctx.SetEnabled(false)
+  if not waitUntil(function()return not ctx.Busy()and ctx.CanStartFishing()end,35)then ctx.SetEnabled(was);error("AUTO n’a pas terminé son action")end
+  local run={};ctx.FishingLock(true);A.Fishing=true;A.FishingRun=run
+  local function untilVisible(test,seconds)
+   local deadline=os.clock()+seconds
+   repeat if A.FishingRun~=run or A.Destroyed then return false end;if test()then return true end;task.wait(.05)until os.clock()>=deadline
+   return false
+  end
+  task.defer(function()
+   local ok,why=pcall(function()
+    while A.FishingRun==run and not A.Destroyed do
+     if not untilVisible(function()return visible("Tooltip")and not visible("Reveal")end,15)then error("Équipe une canne et place-toi au bord de l’eau")end
+     local cam=assert(workspace.CurrentCamera,"Caméra indisponible")
+     local center=cam.ViewportSize/2
+     move(math.floor(center.X),math.floor(center.Y))
+     A.ReleaseFishing=release;press();task.wait(1.05)
+     if A.FishingRun~=run or A.Destroyed then return end
+     release();A.ReleaseFishing=nil
+     assert(untilVisible(function()return visible("Reel")or visible("Reveal")end,30),"Aucune prise détectée")
+     assert(untilVisible(function()if visible("Reveal")then return true end;if visible("Reel")then click()end;return false end,15),"Résultat non affiché")
+     task.wait(1)
+    end
+   end)
+   if A.FishingRun==run and not A.Destroyed then
+    stopFishing();ctx.SetEnabled(was)
+    if not ok then ctx.InventoryNotice("AutoFishing : "..tostring(why))end
+    pcall(A.Publish,true)
+   end
+  end)
+  return true
+ end
  function A.Execute(m)
   if m.action=="images.collect"then
    local images={};for category,config in pairs(A.Assets.Directory)do
@@ -439,7 +495,9 @@ return function(ctx)
   elseif m.action=="settings.update"then
    assert(ctx.Report.SettingsRevision==m.settingsRevision,"Parametres modifies dans le jeu")
    assert(ctx.SetOptions(m.options),"Parametres invalides");return true
-  elseif m.action=="automation.set"then ctx.SetEnabled(m.enabled);return true end
+  elseif m.action=="fishing.set"then return A.SetFishing(m.enabled)
+  elseif m.action=="automation.set"then assert(not A.Fishing,"Arrête AutoFishing avant de modifier AUTO");ctx.SetEnabled(m.enabled);return true end
+  assert(not A.Fishing,"Arrête AutoFishing avant cette action")
   if ctx.BeginManual then assert(ctx.ManualCanContinue(),"Action manuelle interrompue : priorite au vol")
   else assert(not ctx.Busy(),"Action en cours")end
   local uid=m.uid
@@ -474,7 +532,7 @@ return function(ctx)
   local lock={requestId=m.requestId};shared.__SEAAdminRequestLock=lock
   task.spawn(function()
    A.Dispatched=false
-   local inventoryAction=m.action~="settings.update"and m.action~="automation.set"and m.action~="images.collect"
+   local inventoryAction=not A.Fishing and m.action~="settings.update"and m.action~="automation.set"and m.action~="fishing.set"and m.action~="images.collect"
    local ok,confirmed=pcall(function()
     if inventoryAction and ctx.BeginManual then
      A.ManualPending=true
@@ -496,7 +554,7 @@ return function(ctx)
    send(result);pcall(A.Publish,true)
   end)
  end
- function A.Destroy()A.Destroyed=true;if A.IndexRewards then A.IndexRewards.Destroy()end;releaseMutationTool();for _,c in ipairs(A.Connections or{})do c:Disconnect()end;if not ctx.LocalOnly then ctx.Report.AdminReceive=nil end end
+ function A.Destroy()A.Destroyed=true;if A.Fishing then stopFishing()end;if A.IndexRewards then A.IndexRewards.Destroy()end;releaseMutationTool();for _,c in ipairs(A.Connections or{})do c:Disconnect()end;if not ctx.LocalOnly then ctx.Report.AdminReceive=nil end end
  if not ctx.LocalOnly then ctx.Report.AdminReceive=A.Receive end
  task.spawn(function()
   while not A.Destroyed and not ctx.Ready()do task.wait(.5)end

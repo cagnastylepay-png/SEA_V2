@@ -187,7 +187,7 @@ end
 FusionModules.Busy = false
 FusionModules.Request = shared.__AutoSAEFusionRequest
 function FusionModules.Pending()
-	return FusionModules.ManualBusy or FusionModules.MutationBusy or FusionModules.Busy or (FusionModules.Request and not FusionModules.Request.done)or(FusionModules.Help and FusionModules.Help.DropRequest and not FusionModules.Help.DropRequest.done)
+	return FusionModules.FishingBusy or FusionModules.ManualBusy or FusionModules.MutationBusy or FusionModules.Busy or (FusionModules.Request and not FusionModules.Request.done)or(FusionModules.Help and FusionModules.Help.DropRequest and not FusionModules.Help.DropRequest.done)
 end
 local EggSaleRemote
 local GameplayBalance
@@ -4096,7 +4096,7 @@ function FusionModules.RemoteHop.Try()
  if FusionModules.BetweenFlights then return false end
  local hop=FusionModules.RemoteHop
  if hop.Processing or serverHopPending or not hop.Pending or os.clock()<hop.RetryAt then return false end
- if FusionModules.MutationBusy or FusionModules.ManualBusy then return false end
+ if FusionModules.FishingBusy or FusionModules.MutationBusy or FusionModules.ManualBusy then return false end
  local request=hop.Pending
  if os.clock()>=request.Deadline or not hop.Validate(request.Target,request.Forced)then
   hop.Note("invalid:"..tostring(request.Id),os.clock()>=request.Deadline and "Cible expiree avant le depart"or "Conditions locales non remplies avant le depart",request.Target)
@@ -4377,6 +4377,9 @@ shared.__AutoSAEController = {Destroy = destroy, Gui = gui, Reporting = FusionMo
    if FusionModules.AdminRuntime and FusionModules.AdminRuntime.ManualPending then reason="Action manuelle en attente : priorite au vol"end
    return tostring(lastStatusText or autoActivity or"En attente").." · "..reason..(FusionModules.InventoryNotice and" · "..FusionModules.InventoryNotice or"")
   end,
+  FishingLock=function(value)FusionModules.FishingBusy=value==true end,
+  CanStartFishing=function()local carry=readCarry();return carry and not carry.IsCarrying and not treadmillPending and not treadmillAssigned and not(inFlightRequest and not inFlightRequest.done) end,
+  IsEnabled=function()return automaticMode end,
   MutationLock=function(value)FusionModules.MutationBusy=value==true end,
   MoveForUpgrade=FusionModules.Helpers.MoveForUpgrade,
   CanProgression=function()
