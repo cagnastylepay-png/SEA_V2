@@ -446,8 +446,8 @@ return function(ctx)
   local env=type(getgenv)=="function"and getgenv()or getfenv()
   local move,press,release,click=env.mousemoveabs,env.mouse1press,env.mouse1release,env.mouse1click
   assert(type(move)=="function"and type(press)=="function"and type(release)=="function"and type(click)=="function","Entrées souris indisponibles")
-  local gui=player:FindFirstChild("PlayerGui")
   local function visible(name)
+   local gui=player:FindFirstChild("PlayerGui")
    local ui=gui and gui:FindFirstChild("FishingUI")
    local node=ui and ui:FindFirstChild(name,true)
    if not node or not node:IsA("GuiObject")then return false end
@@ -473,6 +473,7 @@ return function(ctx)
     while A.FishingRun==run and not A.Destroyed do
      attempt+=1
      local prefix="Essai "..attempt.." — "
+     ctx.InventoryNotice("AutoFishing : essai "..attempt.." — attente du lancer")
      fishingLog(prefix.."Attente de l’indication de lancer")
      if not untilVisible(function()return visible("Tooltip")and not visible("Reveal")end,15)then error("Lancer indisponible. Équipe une canne et place-toi au bord de l’eau.")end
      local cam=assert(workspace.CurrentCamera,"Caméra indisponible")
@@ -483,6 +484,7 @@ return function(ctx)
      release();A.ReleaseFishing=nil
      fishingLog(prefix.."Lancer relâché après 1,05 s, attente d’une prise")
      assert(untilVisible(function()return visible("Reel")or visible("Reveal")end,30),"Aucune prise détectée")
+     ctx.InventoryNotice("AutoFishing : essai "..attempt.." — prise détectée")
      fishingLog(prefix.."Prise détectée, attente du résultat")
      assert(untilVisible(function()if visible("Reveal")then return true end;if visible("Reel")then click()end;return false end,15),"Résultat non affiché")
      fishingLog(prefix.."Résultat affiché")
