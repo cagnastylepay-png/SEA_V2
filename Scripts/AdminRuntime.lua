@@ -479,6 +479,15 @@ return function(ctx)
     local character=assert(player.Character,"Personnage indisponible")
     considerRods(character)
     considerRods(player:FindFirstChildOfClass("Backpack"))
+    -- Fishing.IsRod recognizes tools by this attribute even when their names differ.
+    if not rod then
+     for _,tool in ipairs(character:GetChildren())do
+      if tool:IsA("Tool")and tool:GetAttribute("GhostDogRod")==true then
+       rod=tool
+       break
+      end
+     end
+    end
     assert(rod,"Aucune canne Alien disponible")
     if rod.Parent~=character then
      local humanoid=assert(character:FindFirstChildOfClass("Humanoid"),"Humanoid indisponible")
