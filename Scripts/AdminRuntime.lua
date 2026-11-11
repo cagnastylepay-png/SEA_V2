@@ -465,37 +465,8 @@ return function(ctx)
   end
   task.defer(function()
    local ok,why=pcall(function()
-    -- Tier order from ReplicatedStorage.Shared.Util.AlienRods.
-    local rodTiers={["alien rod"]=1,["xeno rod"]=2,["lunar rod"]=3,["void rod"]=4,["kraken rod"]=5}
-    local rod,bestTier=nil,0
-    local function considerRods(container)
-     for _,tool in ipairs(container and container:GetChildren()or{})do
-      local tier=rodTiers[tool.Name:lower()]
-      if tool:IsA("Tool")and tier and tier>bestTier then
-       rod,bestTier=tool,tier
-      end
-     end
-    end
-    local character=assert(player.Character,"Personnage indisponible")
-    considerRods(character)
-    considerRods(player:FindFirstChildOfClass("Backpack"))
-    -- Fishing.IsRod recognizes tools by this attribute even when their names differ.
-    if not rod then
-     for _,tool in ipairs(character:GetChildren())do
-      if tool:IsA("Tool")and tool:GetAttribute("GhostDogRod")==true then
-       rod=tool
-       break
-      end
-     end
-    end
-    assert(rod,"Aucune canne Alien disponible")
-    if rod.Parent~=character then
-     local humanoid=assert(character:FindFirstChildOfClass("Humanoid"),"Humanoid indisponible")
-     humanoid:EquipTool(rod)
-     assert(untilVisible(function()return rod.Parent==character end,3),"Équipement de la canne non confirmé")
-    end
     while A.FishingRun==run and not A.Destroyed do
-     if not untilVisible(function()return visible("Tooltip")and not visible("Reveal")end,15)then error("Lancer indisponible. Place-toi au bord de l’eau.")end
+     if not untilVisible(function()return visible("Tooltip")and not visible("Reveal")end,15)then error("Lancer indisponible. Équipe une canne et place-toi au bord de l’eau.")end
      local cam=assert(workspace.CurrentCamera,"Caméra indisponible")
      local center=cam.ViewportSize/2
      move(math.floor(center.X),math.floor(center.Y))
