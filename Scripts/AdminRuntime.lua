@@ -433,6 +433,7 @@ return function(ctx)
  local function stopFishing()
   A.Fishing=false;A.FishingRun=nil
   if A.ReleaseFishing then pcall(A.ReleaseFishing);A.ReleaseFishing=nil end
+  if A.FishingPoseConnection then A.FishingPoseConnection:Disconnect();A.FishingPoseConnection=nil end
   if ctx.FishingLock then ctx.FishingLock(false)end
  end
  local function fishingLog(message)
@@ -440,7 +441,7 @@ return function(ctx)
  end
  function A.SetFishing(enabled)
   assert(not ctx.LocalOnly and ctx.FishingLock and type(enabled)=="boolean","Mode pêche indisponible")
-  if not enabled then stopFishing();ctx.SetEnabled(true);fishingLog("Arrêt demandé");return true end
+  if not enabled then stopFishing();ctx.SetEnabled(false);fishingLog("Arrêt demandé");return true end
   if A.Fishing then return true end
   fishingLog("Démarrage demandé")
   local env=type(getgenv)=="function"and getgenv()or getfenv()
@@ -458,10 +459,28 @@ return function(ctx)
    end
    return false
   end
-  local was=ctx.IsEnabled()
   ctx.SetEnabled(false)
-  if not waitUntil(function()return not ctx.Busy()and ctx.CanStartFishing()end,35)then ctx.SetEnabled(was);error("AUTO n’a pas terminé son action")end
+  if not waitUntil(function()return not ctx.Busy()and ctx.CanStartFishing()end,35)then ctx.SetEnabled(false);error("AUTO n’a pas terminé son action")end
+  local character=assert(player.Character,"Personnage indisponible")
+  local root=assert(character:FindFirstChild("HumanoidRootPart"),"Personnage indisponible")
+  local camera=assert(workspace.CurrentCamera,"Caméra indisponible")
+  local savedPosition=root.CFrame
+  local savedCamera,savedFocus=camera.CFrame,camera.Focus
   local run={};ctx.FishingLock(true);A.Fishing=true;A.FishingRun=run
+  A.FishingPoseConnection=game:GetService("RunService").RenderStepped:Connect(function()
+   if A.FishingRun~=run or A.Destroyed then return end
+   local currentRoot=player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+   if currentRoot and currentRoot.CFrame~=savedPosition then
+    currentRoot.CFrame=savedPosition
+    currentRoot.AssemblyLinearVelocity=Vector3.zero
+    currentRoot.AssemblyAngularVelocity=Vector3.zero
+   end
+   local currentCamera=workspace.CurrentCamera
+   if currentCamera then
+    currentCamera.CFrame=savedCamera
+    currentCamera.Focus=savedFocus
+   end
+  end)
   local function untilVisible(test,seconds)
    local deadline=os.clock()+seconds
    repeat if A.FishingRun~=run or A.Destroyed then return false end;if test()then return true end;task.wait(.05)until os.clock()>=deadline
