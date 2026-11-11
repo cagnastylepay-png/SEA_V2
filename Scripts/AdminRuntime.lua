@@ -436,6 +436,34 @@ return function(ctx)
   if A.FishingPoseConnection then A.FishingPoseConnection:Disconnect();A.FishingPoseConnection=nil end
   if ctx.FishingLock then ctx.FishingLock(false)end
  end
+ local function sellFishingEggs()
+  if not A.Fishing or A.Destroyed or A.Busy or shared.__SEAAdminRequestLock or not ctx.FishingSaleCandidates then return end
+  local pending=shared.__SEAInventorySalesPending or{}
+  shared.__SEAInventorySalesPending=pending
+  local eggs=ownedEggs()
+  for uid in pairs(pending)do if not eggs[uid]then pending[uid]=nil end end
+  local ids={}
+  for _,uid in ipairs(ctx.FishingSaleCandidates())do
+   if not pending[uid]and #ids<64 then table.insert(ids,uid)end
+  end
+  if #ids==0 then return end
+  local lock={fishingSale=true}
+  A.Busy=true;shared.__SEAAdminRequestLock=lock
+  local ok,why=pcall(function()
+   for _,uid in ipairs(ids)do pending[uid]=true end
+   A.Remotes.PetSatchel.SellSelection:FireServer({Assets={},Eggs=ids})
+   local confirmed=waitUntil(function()
+    local latest=ownedEggs()
+    for _,uid in ipairs(ids)do if latest[uid]then return false end end
+    return true
+   end,3)
+   print("[SEA AutoFishing] Vente de "..#ids.." œufs — "..(confirmed and "confirmée"or "confirmation en attente"))
+  end)
+  A.Busy=false
+  if shared.__SEAAdminRequestLock==lock then shared.__SEAAdminRequestLock=nil end
+  if not ok then warn("[SEA AutoFishing] Vente incertaine : "..tostring(why))end
+  pcall(A.Publish,true)
+ end
  local function fishingLog(message)
   print("[SEA AutoFishing] "..message)
  end
@@ -527,6 +555,7 @@ return function(ctx)
      assert(completed,"Résultat non affiché après "..clicks.." clics envoyés")
      fishingLog(prefix.."Résultat affiché")
      task.wait(1)
+     sellFishingEggs()
     end
    end)
    if A.FishingRun==run and not A.Destroyed then
