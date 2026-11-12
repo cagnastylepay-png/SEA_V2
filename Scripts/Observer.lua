@@ -48,10 +48,12 @@ function O.ReceiveSpread(target)
  if target==nil then O.SpreadTarget=nil;return end
  if type(target)~="table"or target.placeId~=tostring(game.PlaceId)or target.jobId~=game.JobId
   or type(target.keeperUserId)~="string"or not target.keeperUserId:match("^%d+$")
-  or target.keeperUserId==tostring(player.UserId)then return end
+  or target.keeperUserId==tostring(player.UserId)
+  or type(target.destinationJobId)~="string"or target.destinationJobId==""or #target.destinationJobId>128
+  or target.destinationJobId==game.JobId then return end
  local delay=tonumber(target.delaySeconds)
  if not delay or delay~=delay or delay<0 or delay>900 then return end
- O.SpreadTarget={keeperUserId=target.keeperUserId,jobId=target.jobId}
+ O.SpreadTarget={keeperUserId=target.keeperUserId,jobId=target.jobId,destinationJobId=target.destinationJobId}
  O.SpreadAt=os.clock()+delay+math.random(0,8)
 end
 function O.TickSpread(now)
@@ -89,7 +91,7 @@ function O.TickSpread(now)
   end
   if O.Destroyed or O.ClientKind~="observer"or O.SpreadTarget~=target or not O.Ready
    or not Players:GetPlayerByUserId(tonumber(target.keeperUserId))then O.SpreadTeleportAt=nil;return end
-  local ok,why=pcall(function()game:GetService("TeleportService"):Teleport(game.PlaceId,player)end)
+  local ok,why=pcall(function()game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId,target.destinationJobId,player)end)
   if not ok then O.SpreadTeleportAt=nil;warn("[Observer] Changement de serveur : "..tostring(why))end
  end)
 end
