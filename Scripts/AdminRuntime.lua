@@ -215,7 +215,7 @@ return function(ctx)
   local income=metric(safe(A.Items.ProfileIncomePerSecond,player,p))
   local offline=A.Constants.OFFLINE_ASSETS or{}
   local duration,multiplier=metric(offline.MAX_DURATION_SECONDS),metric(offline.MONEY_RATE_MULTIPLIER)
-  return {fishingEnabled=not ctx.LocalOnly and A.Fishing==true,eggs=eggs,animals=animals,imageCatalog=A.ImageCatalog,automationStatus=ctx.GetStatus and tostring(ctx.GetStatus()):sub(1,500)or nil,mutationConsumables=mutationMetadata(),mutationStatus=A.MutationStatus,stats={money=metric(p.Money),speedPower=metric(safe(A.Speed.ReadProjected))or metric(p.SpeedPower),
+  return {fishingCapture=A.FishingCapture,fishingEnabled=not ctx.LocalOnly and A.Fishing==true,eggs=eggs,animals=animals,imageCatalog=A.ImageCatalog,automationStatus=ctx.GetStatus and tostring(ctx.GetStatus()):sub(1,500)or nil,mutationConsumables=mutationMetadata(),mutationStatus=A.MutationStatus,stats={money=metric(p.Money),speedPower=metric(safe(A.Speed.ReadProjected))or metric(p.SpeedPower),
    incomePerSecond=income,offlinePerDay=income and duration and multiplier and income*duration*multiplier,
    offlineDurationSeconds=duration,offlineRateMultiplier=multiplier}}
  end
@@ -494,6 +494,27 @@ return function(ctx)
   local camera=assert(workspace.CurrentCamera,"Caméra indisponible")
   local savedPosition=root.CFrame
   local savedCamera,savedFocus=camera.CFrame,camera.Focus
+  local rod
+  for _,tool in ipairs(character:GetChildren())do
+   if tool:IsA("Tool")and tool:GetAttribute("GhostDogRod")==true then rod=tool;break end
+  end
+  local rodData
+  if rod then
+   local attributes={}
+   for key,value in pairs(rod:GetAttributes())do
+    if type(value)=="string"or type(value)=="boolean"or type(value)=="number"then attributes[key]=value end
+   end
+   rodData={name=rod.Name,displayName=rod:GetAttribute("DisplayName")or rod.Name,attributes=attributes}
+  end
+  A.FishingCapture={
+   capturedAt=os.time(),placeId=tostring(game.PlaceId),jobId=game.JobId,
+   inAlienLagoon=player:GetAttribute("InAlienLagoon")==true,
+   characterCFrame={savedPosition:GetComponents()},
+   cameraCFrame={savedCamera:GetComponents()},cameraFocus={savedFocus:GetComponents()},
+   fieldOfView=camera.FieldOfView,cameraType=camera.CameraType.Name,rod=rodData
+  }
+  A.Signature=nil
+  pcall(A.Publish,true)
   local run={};ctx.FishingLock(true);A.Fishing=true;A.FishingRun=run
   A.FishingPoseConnection=game:GetService("RunService").RenderStepped:Connect(function()
    if A.FishingRun~=run or A.Destroyed then return end
