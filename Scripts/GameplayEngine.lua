@@ -3571,22 +3571,29 @@ function FusionModules.Helpers.FishingActive()
 end
 function FusionModules.Helpers.MoveForFishing(destination,viaStart,active,usePathfinding)
  local character,_,root=getCharacterParts()
- if not root or not active()then return false end
+ if not root then return false,"personnage absent"end
+ if not active()then return false,"pêche interrompue avant le trajet"end
  local token=generation
  autoActivity="TO_FISHING";FusionModules.FishingMoveValid=active
- local ok,reached=pcall(function()
-  if viaStart then
-   local departure=assert(getStartAreaDestination(),"StartArea indisponible")
-   if not FusionModules.Helpers.PathMove(departure,token,false)then return false end
+ local ok,reached,detail=pcall(function()
+  -- A resumed client near Ferryman must not pathfind all the way back to
+  -- StartArea. Treadmill exits already reach StartArea in leaveTreadmill.
+  if viaStart and isSafe(root.Position)==true then
+   local departure,why=getStartAreaDestination()
+   if not departure then return false,why or "StartArea indisponible"end
+   if distanceXZ(root.Position,departure)>CONFIG.PreciseArrivalRadius then
+    local arrived,reason=FusionModules.Helpers.PathMove(departure,token,false)
+    if not arrived then return false,"Zone sûre : "..tostring(reason)end
+   end
   end
-  if not active()then return false end
+  if not active()then return false,"pêche interrompue pendant le trajet"end
   if usePathfinding then return FusionModules.Helpers.PathMove(destination,token,false)end
   return moveActivity(Vector3.new(destination.X,root.Position.Y,destination.Z),token,false)
  end)
  FusionModules.FishingMoveValid=nil
  stopMovement(true)
- if not ok then error(reached)end
- return reached
+ if not ok then return false,tostring(reached)end
+ return reached,detail
 end
 function FusionModules.Helpers.ReturnForFishingEgg()
  local hop=FusionModules.RemoteHop
