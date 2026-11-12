@@ -3313,11 +3313,11 @@ local function serviceWallMaintenance(token,postFlight)
 end
 
 -- Butterfly waiting uses the game's event clock and native net tool.
-FusionModules.Butterflies = {Until=0, Revision=0, RetryAt=0}
-function FusionModules.Butterflies.Available()
+FusionModules.Butterflies = {Until=0, Revision=0, RetryAt=0, CompletedUntil=0}
+function FusionModules.Butterflies.Available(inProgress)
  if not FusionModules.Options.AutoPapillon then return false end
  local b=FusionModules.Butterflies
- if Workspace:GetServerTimeNow()>=b.Until or os.clock()<b.RetryAt then return false end
+ if Workspace:GetServerTimeNow()>=b.Until or os.clock()<b.RetryAt or(not inProgress and b.Until<=b.CompletedUntil)then return false end
  local world=Workspace:FindFirstChild("World")
  local areas=world and world:FindFirstChild("Areas")
  local area=areas and areas:FindFirstChild("ButterflyBloom")
@@ -3364,13 +3364,14 @@ function FusionModules.Butterflies.Idle(token)
   b.RetryAt=os.clock()+5
   return true
  end
+ b.CompletedUntil=b.Until
  autoActivity="BUTTERFLIES"
  log("BUTTERFLY","Centre rejoint : filet equipe jusqu'au prochain cycle")
  log("ACTION","Collecte des papillons en cours")
  setStatus("Papillons : filet equipe jusqu'au prochain cycle d'oeufs.")
  while FusionModules.Options.AutoPapillon and activityValid(token,character) and automaticMode and not stopAfterFlight
   and b.Revision==revision and Workspace:GetServerTimeNow()<b.Until do
-  local present,net=b.Available()
+  local present,net=b.Available(true)
   if not present then break end
   if net.Parent~=character then humanoid:EquipTool(net) end
   task.wait(CONFIG.ScanInterval)
@@ -3399,8 +3400,8 @@ end
 
 do
  local available=FusionModules.Butterflies.Available
- FusionModules.Butterflies.Available=function()
-  local ok,bounds,tool=FusionModules.Protect("BUTTERFLY_DETECTION",available)
+ FusionModules.Butterflies.Available=function(inProgress)
+  local ok,bounds,tool=FusionModules.Protect("BUTTERFLY_DETECTION",available,inProgress)
   if ok then return bounds,tool end
   FusionModules.Butterflies.RetryAt=os.clock()+10
   return false
@@ -3475,12 +3476,32 @@ function FusionModules.Helpers.RequestFishingEgg(selected,rate)
  }})
  FusionModules.Helpers.ReturnForFishingEgg()
 end
+function FusionModules.Butterflies.FromFishing(token)
+ if not FusionModules.Butterflies.Available()then return false end
+ local runtime=FusionModules.AdminRuntime
+ if not runtime then return false end
+ runtime.StopFishing()
+ if player:GetAttribute("InAlienLagoon")==true then
+  setStatus("Papillons : retour en bateau depuis le lagon")
+  local ok,result=pcall(runtime.LeaveFishingLagoon)
+  if not ok or not result then
+   if serverHopPending or not automaticMode then return true end
+   error("Retour pour les papillons : "..tostring(result))
+  end
+ end
+ if not automaticMode or not autoEnabled or generation~=token or serverHopPending then return true end
+ syncQueue()
+ if selectBest()or FusionModules.RemoteHop.Pending or FusionModules.RemoteHop.LocalReturnTarget then return true end
+ if FusionModules.Butterflies.Available()then FusionModules.Butterflies.Idle(token)end
+ return true
+end
 function FusionModules.Helpers.FishingIdle(token)
  local runtime=FusionModules.AdminRuntime
  if not runtime or not runtime.Initialized then task.wait(.5);return true end
  local exited,reason=leaveTreadmill(token)
  if not exited then return false,reason end
  stopMovement(true)
+ if FusionModules.Butterflies.FromFishing(token)then return true end
  if os.clock()<(runtime.FishingRetryAt or 0)then task.wait(.5);return true end
  runtime.SetFishing(true,true)
  local fishingRun=runtime.FishingRun
@@ -3488,7 +3509,8 @@ function FusionModules.Helpers.FishingIdle(token)
   syncQueue()
   local selected,rate=selectBest()
   if selected then FusionModules.Helpers.RequestFishingEgg(selected,rate)
-  elseif FusionModules.RemoteHop.LocalReturnTarget then FusionModules.Helpers.ReturnForFishingEgg()end
+  elseif FusionModules.RemoteHop.LocalReturnTarget then FusionModules.Helpers.ReturnForFishingEgg()
+  elseif FusionModules.Butterflies.Available()then FusionModules.Butterflies.FromFishing(token)end
   task.wait(.1)
  end
  if runtime.FishingRun==fishingRun then runtime.StopFishing()end
