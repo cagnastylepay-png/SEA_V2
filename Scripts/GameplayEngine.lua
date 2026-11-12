@@ -2347,7 +2347,7 @@ function FusionModules.Arrival.Clear(reason)
  local arrival=FusionModules.Arrival
  if not arrival.Uid then return end
  log("ARRIVAL_TARGET","UID=%s : %s",arrival.Uid,tostring(reason))
- arrival.Uid=nil;arrival.Deadline=nil
+ arrival.Uid=nil;arrival.Deadline=nil;arrival.DirectFromBoat=nil
  pcall(function()game:GetService("TeleportService"):SetTeleportSetting("OvoraRemoteArrival",nil)end)
 end
 function FusionModules.Arrival.Load()
@@ -2477,6 +2477,113 @@ local function moveActivity(destination, token, interruptForEgg, nextDestination
 	end
 end
 
+
+-- Walk real waypoints; treadmill footprints are forbidden, including non-collidable triggers.
+function FusionModules.Helpers.PathMove(destination,token,interruptForEgg)
+ local character,humanoid,root=getCharacterParts()
+ if not root or not humanoid then return false,"personnage absent"end
+ local folder=Instance.new("Folder");folder.Name="SEAPathExclusions"
+ local zones={}
+ local plots=Workspace:FindFirstChild("Plots")
+ if plots then
+  for _,plot in ipairs(plots:GetChildren())do
+   local bottom=plot:FindFirstChild("TreadmillBottom")
+   if bottom and bottom:IsA("BasePart")then
+    local volume=Instance.new("Part")
+    volume.Name="ExcludedTreadmill";volume.Anchored=true;volume.CanCollide=false
+    volume.CanTouch=false;volume.CanQuery=false;volume.Transparency=1
+    volume.Size=Vector3.new(bottom.Size.X+6,16,bottom.Size.Z+6)
+    volume.CFrame=bottom.CFrame*CFrame.new(0,4,0)
+    local modifier=Instance.new("PathfindingModifier")
+    modifier.Label="SEA_NoTreadmill";modifier.PassThrough=false;modifier.Parent=volume
+    volume.Parent=folder;table.insert(zones,volume)
+   end
+  end
+ end
+ folder.Parent=Workspace
+ local function inside(zone,point,padding)
+  local p=zone.CFrame:PointToObjectSpace(point)
+  return math.abs(p.X)<zone.Size.X/2+(padding or 0)and math.abs(p.Z)<zone.Size.Z/2+(padding or 0)and math.abs(p.Y)<zone.Size.Y/2+4
+ end
+ local function crosses(zone,a,b)
+  local p=zone.CFrame:PointToObjectSpace(a);local q=zone.CFrame:PointToObjectSpace(b)
+  if math.min(p.Y,q.Y)>zone.Size.Y/2+4 or math.max(p.Y,q.Y)<-zone.Size.Y/2-4 then return false end
+  local lo,hi=0,1
+  for _,axis in ipairs({"X","Z"})do
+   local delta=q[axis]-p[axis];local half=zone.Size[axis]/2+.5
+   if math.abs(delta)<.0001 then if math.abs(p[axis])>half then return false end
+   else
+    local x,y=(-half-p[axis])/delta,(half-p[axis])/delta
+    lo=math.max(lo,math.min(x,y));hi=math.min(hi,math.max(x,y))
+    if lo>hi then return false end
+   end
+  end
+  return true
+ end
+ local ok,reached,reason=pcall(function()
+  -- AskDoff may leave the character inside its footprint. Exit once by the
+  -- nearest edge, then forbid that footprint for every remaining segment.
+  for _,zone in ipairs(zones)do
+   if inside(zone,destination,1)then return false,"destination sur un tapis exclu"end
+   if inside(zone,root.Position,1)then
+    local p=zone.CFrame:PointToObjectSpace(root.Position)
+    local candidates={Vector3.new(zone.Size.X/2+5,p.Y,p.Z),Vector3.new(-zone.Size.X/2-5,p.Y,p.Z),Vector3.new(p.X,p.Y,zone.Size.Z/2+5),Vector3.new(p.X,p.Y,-zone.Size.Z/2-5)}
+    table.sort(candidates,function(a,b)return(a-p).Magnitude<(b-p).Magnitude end)
+    local exit
+    for _,candidate in ipairs(candidates)do
+     local point=zone.CFrame:PointToWorldSpace(candidate);local clear=true
+     for _,other in ipairs(zones)do if other~=zone and crosses(other,root.Position,point)then clear=false;break end end
+     if clear then exit=point;break end
+    end
+    if not exit then return false,"sortie du tapis sans chemin"end
+    local arrived,why=moveActivity(exit,token,interruptForEgg)
+    if not arrived then return false,why end
+   end
+  end
+  for attempt=1,3 do
+   if not activityValid(token,character)then return false,"trajet annule"end
+   local path=game:GetService("PathfindingService"):CreatePath({
+    AgentRadius=2.5,AgentHeight=5,AgentCanJump=true,WaypointSpacing=4,
+    Costs={SEA_NoTreadmill=math.huge}
+   })
+   local computed,failure=pcall(function()path:ComputeAsync(root.Position,destination)end)
+   if not computed or path.Status~=Enum.PathStatus.Success then
+    local status=path.Status;path:Destroy();return false,"aucun chemin hors tapis : "..tostring(failure or status)
+   end
+   local points=path:GetWaypoints();local previous=root.Position
+   for _,point in ipairs(points)do
+    for _,zone in ipairs(zones)do
+     if crosses(zone,previous,point.Position)then path:Destroy();return false,"chemin refuse : traverse un tapis"end
+    end
+    previous=point.Position
+   end
+   local blocked=false
+   local currentIndex=1
+   local connection=path.Blocked:Connect(function(index)if index>=currentIndex then blocked=true end end)
+   local success,why=true,nil
+   for index,point in ipairs(points)do
+    currentIndex=index
+    if blocked then success=false;why="obstacle";break end
+    -- Recheck the actual segment after braking/overshoot, not just the computed path.
+    for _,zone in ipairs(zones)do if crosses(zone,root.Position,point.Position)then success=false;why="tapis sur le segment";break end end
+    if not success then break end
+    if point.Action==Enum.PathWaypointAction.Jump then humanoid.Jump=true end
+    success,why=moveActivity(point.Position,token,interruptForEgg)
+    if not success then break end
+   end
+   connection:Disconnect();path:Destroy()
+   if success then return true end
+   stopMovement(true)
+   if why~="obstacle"then return false,why end
+  end
+  return false,"chemin bloque apres trois calculs"
+ end)
+ folder:Destroy()
+ if not ok then stopMovement(true);return false,tostring(reached)end
+ if not reached then stopMovement(true)end
+ return reached,reason
+end
+
 -- Cross the real separator using native walking, then let the local game guard
 -- stay valid across several frames. No position/velocity/attribute writes.
 function FusionModules.Helpers.EnterGameplay(token)
@@ -2546,8 +2653,9 @@ local function leaveTreadmill(token)
 	if humanoid then humanoid.Jump = true end
 	autoActivity = "FARM"
 	safeHome = getStartAreaDestination()
-	log("TREADMILL_EXIT_READY", "Sortie confirmee : MoveTo direct vers le centre de StartArea")
-	return true
+	log("TREADMILL_EXIT_READY", "Sortie confirmee : pathfinding hors tapis vers StartArea")
+ if not safeHome then return false,"StartArea indisponible"end
+ return FusionModules.Helpers.PathMove(safeHome,token,false)
 end
 
 
@@ -3424,7 +3532,7 @@ function FusionModules.Helpers.FishingActive()
  local runtime=FusionModules.AdminRuntime
  return FusionModules.Helpers.FishingMode()and(runtime and runtime.Fishing==true or player:GetAttribute("InAlienLagoon")==true)
 end
-function FusionModules.Helpers.MoveForFishing(destination,viaStart,active)
+function FusionModules.Helpers.MoveForFishing(destination,viaStart,active,usePathfinding)
  local character,_,root=getCharacterParts()
  if not root or not active()then return false end
  local token=generation
@@ -3432,10 +3540,10 @@ function FusionModules.Helpers.MoveForFishing(destination,viaStart,active)
  local ok,reached=pcall(function()
   if viaStart then
    local departure=assert(getStartAreaDestination(),"StartArea indisponible")
-   local nextPoint=Vector3.new(destination.X,departure.Y,destination.Z)
-   if not moveActivity(departure,token,false,nextPoint)then return false end
+   if not FusionModules.Helpers.PathMove(departure,token,false)then return false end
   end
   if not active()then return false end
+  if usePathfinding then return FusionModules.Helpers.PathMove(destination,token,false)end
   return moveActivity(Vector3.new(destination.X,root.Position.Y,destination.Z),token,false)
  end)
  FusionModules.FishingMoveValid=nil
@@ -3461,6 +3569,7 @@ function FusionModules.Helpers.ReturnForFishingEgg()
  if serverHopPending or not automaticMode then return true end
  hop.LocalReturnTarget=nil
  FusionModules.Arrival.Uid=target.uid
+ FusionModules.Arrival.DirectFromBoat=true
  FusionModules.Arrival.Deadline=os.clock()+CONFIG.ArrivalTargetTimeout
  FusionModules.Reporting.MarkSettingsDirty()
  autoActivity="IDLE"
@@ -3675,7 +3784,10 @@ local function worker(token)
    FusionModules.Helpers.RequestFishingEgg(selected,rate);task.wait(.2);continue
   end
 		if selected then
-			if selected.Uid==FusionModules.Arrival.Uid then FusionModules.Arrival.Clear("Debut du vol de la cible")end
+			if selected.Uid==FusionModules.Arrival.Uid then
+    if FusionModules.Arrival.DirectFromBoat then directNext=true end
+    FusionModules.Arrival.Clear("Debut du vol de la cible")
+   end
 			searchWaitForEgg = false
 			serverSearchState = automaticMode and "Oeuf eligible : collecte" or "OFF"
             FusionModules.BatCombat.ApproachUid=not recovering and selected.Uid or nil
@@ -3687,10 +3799,8 @@ local function worker(token)
 				if not destination then stopAutomation(destinationReason); return end
 				autoActivity = "TO_FARM"
 				setStatus("Trajet vers le centre de StartArea...")
-				log("START_AREA_MOVETO", "Trajet direct vers %s", FusionModules.Helpers.formatPosition(destination))
-				local eggPosition = getRecordPosition(records[selected.Uid] or selected)
-				local nextDestination = eggPosition and Vector3.new(eggPosition.X, destination.Y, eggPosition.Z)
-				local reached, reason = measureAction("TRAJET_STARTAREA", moveActivity, destination, token, false, nextDestination)
+				log("START_AREA_MOVETO", "Pathfinding hors tapis vers %s", FusionModules.Helpers.formatPosition(destination))
+				local reached, reason = measureAction("TRAJET_STARTAREA", FusionModules.Helpers.PathMove, destination, token, false)
 				if not reached then if FusionModules.CollectionReturnPending then directNext=false;continue end;stopAutomation("StartArea : " .. tostring(reason)); return end
 			end
 			if not autoEnabled or generation ~= token then return end

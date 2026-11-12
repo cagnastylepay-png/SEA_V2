@@ -34,11 +34,15 @@ return function(ctx)
   if player:GetAttribute("InAlienLagoon")~=true then return true end
   local marker=assert(util.Marker(util.Markers.Return),"Retour du lagon introuvable")
   ctx.Status("Pêche : retour vers le bateau")
-  assert(ctx.Move(marker.Position,false,ctx.Active),"Trajet du retour interrompu")
+  assert(ctx.Move(marker.Position,false,ctx.Active,true),"Trajet du retour interrompu")
   assert(ctx.Active(),"Retour interrompu")
   local direction,message=require(RS.Shared.Remotes).AlienLagoon.Request:InvokeServer()
   assert(direction=="Exit",message or "Retour refusé")
   assert(waitFor(function()return player:GetAttribute("InAlienLagoon")~=true end,30),"Sortie du lagon non confirmée")
+  assert(waitFor(function()
+   local camera=workspace.CurrentCamera
+   return camera and camera.CameraType~=Enum.CameraType.Scriptable
+  end,15),"Fin du retour en bateau non confirmée")
   return true
  end
  if player:GetAttribute("InAlienLagoon")~=true then
