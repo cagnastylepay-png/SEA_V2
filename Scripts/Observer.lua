@@ -1,4 +1,4 @@
--- Ovora observer: reporting and periodic standalone clicks; no automatic teleportation.
+-- Ovora Observer: reports, minute clicks, and server spreading for standalone clients.
 if shared.__SEAObserverController and not shared.__SEAObserverController.Destroyed then return shared.__SEAObserverController end
 local O={Listeners={},SocketConnections={},ClientKind="observer",Serial=0,Connections={},Destroyed=false,Ready=false,IdentityReady=false,EggDirty=true,PlayerDirty=true,
  EggRevision=0,PlayerRevision=0,NextConnect=0,Backoff=2}
@@ -41,6 +41,59 @@ function O.TickClicks(now)
  end)
 end
 
+-- Render coordinates standalone Observers sharing a server.
+O.SpreadRetryAt=0
+function O.ReceiveSpread(target)
+ if O.Destroyed or O.ClientKind~="observer"then return end
+ if target==nil then O.SpreadTarget=nil;return end
+ if type(target)~="table"or target.placeId~=tostring(game.PlaceId)or target.jobId~=game.JobId
+  or type(target.keeperUserId)~="string"or not target.keeperUserId:match("^%d+$")
+  or target.keeperUserId==tostring(player.UserId)then return end
+ local delay=tonumber(target.delaySeconds)
+ if not delay or delay~=delay or delay<0 or delay>900 then return end
+ O.SpreadTarget={keeperUserId=target.keeperUserId,jobId=target.jobId}
+ O.SpreadAt=os.clock()+delay+math.random(0,8)
+end
+function O.TickSpread(now)
+ if O.Destroyed or O.ClientKind~="observer"then O.SpreadTarget=nil;return end
+ if O.SpreadTeleportAt then
+  if now-O.SpreadTeleportAt<90 then return end
+  O.SpreadTeleportAt=nil;O.SpreadRetryAt=now+60
+ end
+ local target=O.SpreadTarget
+ if not target or not O.Ready or O.ClickBusy or now<(O.SpreadAt or 0)or now<O.SpreadRetryAt then return end
+ if target.jobId~=game.JobId then O.SpreadTarget=nil;return end
+ local keeper=Players:GetPlayerByUserId(tonumber(target.keeperUserId))
+ if not keeper then O.SpreadTarget=nil;return end
+ O.SpreadTeleportAt=now;O.SpreadRetryAt=now+60
+ task.spawn(function()
+  local env=type(getgenv)=="function"and getgenv()or getfenv()
+  local queue=env.queue_on_teleport or env.queueonteleport or(env.syn and env.syn.queue_on_teleport)
+  if not O.SpreadQueued and type(queue)=="function"then
+   local queued=pcall(queue,[[if not shared.__SEAObserverController or shared.__SEAObserverController.Destroyed then
+    local run,why=loadstring(game:HttpGet("https://raw.githubusercontent.com/cagnastylepay-png/SEA_V2/main/Loaders/Observer.lua"),"SEA_V2/Observer")
+    assert(run,why);run()
+   end]])
+   O.SpreadQueued=queued
+  end
+  -- Same native flush as AntiAFKController; a stalled flush must not hold the hop.
+  local flushed=false
+  task.spawn(function()
+   pcall(function()require(RS.Shared.Remotes).Telemetry.AskIdleHopFlush:InvokeServer()end)
+   flushed=true
+  end)
+  local deadline=os.clock()+3
+  while not flushed and os.clock()<deadline do
+   if O.Destroyed or O.ClientKind~="observer"then O.SpreadTeleportAt=nil;return end
+   task.wait(.1)
+  end
+  if O.Destroyed or O.ClientKind~="observer"or O.SpreadTarget~=target or not O.Ready
+   or not Players:GetPlayerByUserId(tonumber(target.keeperUserId))then O.SpreadTeleportAt=nil;return end
+  local ok,why=pcall(function()game:GetService("TeleportService"):Teleport(game.PlaceId,player)end)
+  if not ok then O.SpreadTeleportAt=nil;warn("[Observer] Changement de serveur : "..tostring(why))end
+ end)
+end
+
 function O.Status(status,good)
  O.LastStatus=status;O.Connected=good==true
 end
@@ -50,7 +103,7 @@ function O.Connect(signal,callback)
  if ok then table.insert(O.Connections,connection)end
 end
 function O.Disconnect()
- O.Serial+=1;O.LastPolicy=nil
+ O.Serial+=1;O.LastPolicy=nil;O.SpreadTarget=nil
  O.Ready=false;O.IdentityReady=false;O.Connecting=false;O.EggAckRevision=nil
  local socket=O.Socket;O.Socket=nil
  for _,connection in ipairs(O.SocketConnections)do pcall(function()connection:Disconnect()end)end
@@ -252,6 +305,7 @@ function O.OpenSocket()
      if message.accepted==true and message.sessionId==O.Session and message.revision==O.EggRevision then
       O.EggAckRevision=message.revision;O.Status("Observation transmise",true)
      end
+    elseif message.type=="observer.spread"then O.ReceiveSpread(message.target)
     elseif message.type=="reporting.policy"then O.LastPolicy=message
     end
     for callback in pairs(O.Listeners)do local handled,why=pcall(callback,message);if not handled then warn("[Observer] Client callback : "..tostring(why))end end
@@ -261,11 +315,15 @@ function O.OpenSocket()
   if not success and O.Serial==serial then O.Disconnect()end
  end)
 end
+O.Connect(game:GetService("TeleportService").TeleportInitFailed,function(target)
+ if target==player and O.SpreadTeleportAt then O.SpreadTeleportAt=nil;O.SpreadRetryAt=os.clock()+60 end
+end)
 O.Refresh()
 task.spawn(function()
  while not O.Destroyed do
   local now=os.clock()
-  O.TickClicks(now)
+  O.TickSpread(now)
+  if not O.SpreadTeleportAt then O.TickClicks(now)end
   local cycle=tostring(O.Cycle.ActivePeriodIndexAt(O.Clock.Now()))
   if cycle~=O.CurrentCycle then O.CurrentCycle=cycle;O.Refresh()end
   if not O.Syncing and O.SnapshotCycle~=cycle and now>=(O.NextSync or 0)then O.Refresh()end
