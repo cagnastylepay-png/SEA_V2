@@ -834,15 +834,22 @@ local function getAnimalName(record)
 	return config and config.DisplayName or record.AssetCategory or "Inconnu"
 end
 
-local function recordFlightResult(ctx, succeeded)
-	if ctx.resultLogged then return end
-	ctx.resultLogged = true
-	local text = string.format('Vol de "%s" %s | %s', getAnimalName(ctx.record or {}), succeeded and "Reussi" or "Echoue",FusionModules.Helpers.DescribeEgg(ctx.record))
- if ctx.help then text="[AIDE Forest] "..text end
-	table.insert(flightHistory, {Text=text, Success=succeeded})
-	if #flightHistory > 200 then table.remove(flightHistory, 1) end
-	log("FLIGHT_RESULT", "%s", text)
-	if refreshFlightLog then refreshFlightLog() end
+local function recordFlightResult(ctx, succeeded, failure)
+ if ctx.resultLogged then return end
+ ctx.resultLogged=true
+ local reason=ctx.flightReason or "Récupération d'un œuf déjà transporté"
+ if not succeeded then
+  local cause=tostring(failure or ctx.failureReason or "Interruption du vol")
+  cause=cause:match("^[^\r\n]+")or cause
+  reason=reason.."; Échec : "..cause
+ end
+ local text=string.format("Vol de %s %s/s %s, {%s}",getAnimalName(ctx.record or {}),
+  type(ctx.flightRate)=="number"and formatNumber(ctx.flightRate)or "inconnu",
+  succeeded and "Reussi"or "Echouee",reason)
+ table.insert(flightHistory,{Text=text,Success=succeeded})
+ if #flightHistory>200 then table.remove(flightHistory,1)end
+ log("FLIGHT_RESULT","%s",text)
+ if refreshFlightLog then refreshFlightLog()end
 end
 
 local function getRatePerSecond(record)
@@ -2026,6 +2033,12 @@ function FusionModules.Help.Deposit(ctx,destination)
 end
 
 local function runCycle(record, rate, recovering, findNext)
+ local entry=queuedEggs[record.Uid]
+ local flightReason=recovering and "Récupération d'un œuf déjà transporté"or FusionModules.Helpers.FlightEligibility(record,entry and entry.Source,rate)
+ if not flightReason then
+  queuedEggs[record.Uid],trackedEggs[record.Uid]=nil,nil
+  return false,"NEXT_AVAILABLE"
+ end
 	local character, humanoid, root = getCharacterParts()
 	if not character or not humanoid or not root then return false, "personnage absent" end
 	local destination, destinationReason = getStartAreaDestination()
@@ -2039,6 +2052,7 @@ local function runCycle(record, rate, recovering, findNext)
  local helpDestination=help and FusionModules.Help.Destination()
  if help and not helpDestination then return false,"Centre Forest introuvable"end
  local ctx = {
+  flightReason=flightReason,flightRate=rate,
   help=help,CollectionStopped=FusionModules.CollectionReturnPending==true,
 		uid = record.Uid, record = record, generation = generation, character = character, findNext = findNext,
 		startedAt = os.clock(), phaseStartedAt = os.clock(),
@@ -2133,7 +2147,7 @@ local function runCycle(record, rate, recovering, findNext)
 		end
 		return false, "annule"
 	end, debug.traceback)
-	recordFlightResult(ctx, cycleOK and completed == true)
+	recordFlightResult(ctx, cycleOK and completed == true, cycleOK and failure or completed)
 	cleanupCycle(ctx)
 	if not cycleOK then return false, tostring(completed) end
 	return completed, failure
@@ -2261,6 +2275,28 @@ local function enqueueEgg(record, source)
 	return true
 end
 
+function FusionModules.Helpers.FlightEligibility(record,source,rate)
+ if source=="MANUEL"then return "Demande manuelle"end
+ if not automaticMode or not FusionModules.Options.AutoEggs or not FusionModules.Helpers.AllowedBiome(record)then return nil end
+ if source=="RARITY"then
+  if FusionModules.Helpers.IsAlwaysEligibleRarity(record)then return "Rareté Divine prioritaire"end
+ elseif source=="AUTO"then
+  if FusionModules.Helpers.InIncomeRange("AutoEggs",rate)then
+   return "Collecte automatique, seuil "..formatNumber(FusionModules.Options.AutoEggsMin).."/s à "..formatNumber(FusionModules.Options.AutoEggsMax).."/s"
+  end
+ elseif source=="INDEX"and FusionModules.Options.AutoIndex then
+  local ok,profile=pcall(Save.Peek)
+  local category=record.AssetCategory
+  if ok and type(profile)=="table"and type(profile.Index)=="table"and category
+   and profile.Index[category]~=true and Assets.Directory[category]
+   and not FusionModules.Helpers.backpackEggCategories(profile)[category]
+   and not FusionModules.Helpers.plotAnimalCategories()[category]then return "Manquant dans l'index"end
+ elseif source=="HELP"and FusionModules.Help.Eligible(record)then
+  return "Aide aux favoris, seuil "..formatNumber(FusionModules.Options.AutoHelpMin).."/s à moins de "..formatNumber(FusionModules.Options.AutoEggsMin).."/s"
+ end
+ return nil
+end
+
 syncQueue = function()
 	if not ready or destroyed then return end
 	local plotCategories = FusionModules.Helpers.plotAnimalCategories()
@@ -2271,6 +2307,7 @@ syncQueue = function()
     or(not automaticMode and entry.Source~="MANUEL")
     or(entry.Source~="MANUEL"and not FusionModules.Helpers.AllowedBiome(record))
     or(entry.Source=="HELP"and not FusionModules.Help.Eligible(record))
+    or not FusionModules.Helpers.FlightEligibility(record,entry.Source,getRatePerSecond(record))
 				or (entry.Source == "INDEX" and (not FusionModules.Options.AutoEggs or not FusionModules.Options.AutoIndex or plotCategories[record.AssetCategory]))
     or ((entry.Source=="AUTO"or entry.Source=="RARITY")and not FusionModules.Options.AutoEggs)
     or (entry.Source=="AUTO"and ((getRatePerSecond(record)or 0)<FusionModules.Options.AutoEggsMin or (getRatePerSecond(record)or math.huge)>FusionModules.Options.AutoEggsMax))then
@@ -2297,9 +2334,9 @@ syncQueue = function()
                     and not plotCategories[record.AssetCategory]
 				if FusionModules.Options.AutoEggs and FusionModules.Helpers.IsAlwaysEligibleRarity(record) then
 					local existing = queuedEggs[uid]
-					if existing then existing.Source = "RARITY" end
+					if existing and existing.Source~="MANUEL"then existing.Source = "RARITY" end
 					enqueueEgg(record, "RARITY")
-				elseif FusionModules.Options.AutoEggs and calculatedRate and rate >= minimumRatePerSecond and rate<=FusionModules.Options.AutoEggsMax then
+				elseif FusionModules.Options.AutoEggs and calculatedRate and rate >= FusionModules.Options.AutoEggsMin and rate<=FusionModules.Options.AutoEggsMax then
 					local existing = queuedEggs[uid]
 					if existing and existing.Source == "INDEX" then existing.Source = "AUTO" end
 					enqueueEgg(record, "AUTO")
@@ -2391,7 +2428,7 @@ local function selectBest()
 				if not latest.ObservationOnly then records[uid] = latest end
 				local rate = getRatePerSecond(latest)
 				if rate == nil and FusionModules.Helpers.IsAlwaysEligibleRarity(latest) then rate = 0 end
-				if rate then
+				if rate and FusionModules.Helpers.FlightEligibility(latest,entry.Source,rate)then
 					if uid==FusionModules.Arrival.Uid then return latest,rate end
 					local priority={Uid=uid,Source=entry.Source,Rate=rate,Distance=FusionModules.Helpers.QueueDistance(latest,root and root.Position)}
                     if not bestPriority or FusionModules.Helpers.QueueBefore(priority,bestPriority)then
@@ -2411,7 +2448,7 @@ stopAutomation = function(reason, pause)
 	autoEnabled = false
     if FusionModules.Reporting then FusionModules.Reporting.MarkSettingsDirty()end
 	generation += 1
-	if currentCycle then cleanupCycle(currentCycle) end
+	if currentCycle then currentCycle.failureReason=reason or "Arrêt demandé";cleanupCycle(currentCycle) end
 	stopMovement(true)
 	setStatus(reason or "Arrete", Color3.fromRGB(255, 150, 120))
 	if renderControls then renderControls() end
@@ -4524,18 +4561,23 @@ end)
 
 -- History decoding has its own register scope.
 ;(function()
-local historyOK, previousLog = executorTools.ReadLog()
-if historyOK and type(previousLog) == "string" then
-	for line in previousLog:gmatch("[^\r\n]+") do
-		if line:find("[FLIGHT_RESULT]", 1, true) then
-			local name, result = line:match('Vol de "(.-)" (.+)$')
-			if name and (result == "Reussi" or result == "Echoue") then
-				table.insert(flightHistory, {Text='Vol de "'..name..'" '..result, Success=result=="Reussi"})
-				if #flightHistory > 200 then table.remove(flightHistory,1) end
-			end
-		end
-	end
-end
+ local ok,previousLog=executorTools.ReadLog()
+ if ok and type(previousLog)=="string"then
+  for line in previousLog:gmatch("[^\r\n]+")do
+   if line:find("[FLIGHT_RESULT]",1,true)then
+    local modern=line:match("%[FLIGHT_RESULT%]%[[^%]]*%] (Vol de .+)$")
+    if modern then
+     table.insert(flightHistory,{Text=modern,Success=modern:find(" Reussi, {",1,true)~=nil})
+    else
+     local name,result=line:match('Vol de "(.-)" (.+)$')
+     if name and(result=="Reussi"or result=="Echoue")then
+      table.insert(flightHistory,{Text='Vol de "'..name..'" '..result,Success=result=="Reussi"})
+     end
+    end
+    if #flightHistory>200 then table.remove(flightHistory,1)end
+   end
+  end
+ end
 end)()
 
 log("SESSION", "Nouveau lancement %s", os.date("%Y-%m-%d %H:%M:%S"))
@@ -4692,4 +4734,3 @@ end)
 
 
 return shared.__AutoSAEController
-
