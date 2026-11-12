@@ -2577,43 +2577,89 @@ function FusionModules.Helpers.PathMove(destination,token,interruptForEgg)
     if not arrived then return false,why end
    end
   end
-  for attempt=1,3 do
-   if not activityValid(token,character)then return false,"trajet annule"end
-   local path=game:GetService("PathfindingService"):CreatePath({
-    AgentRadius=2.5,AgentHeight=5,AgentCanJump=true,WaypointSpacing=4,
-    Costs={SEA_NoTreadmill=math.huge}
-   })
-   local computed,failure=pcall(function()path:ComputeAsync(root.Position,destination)end)
-   if not computed or path.Status~=Enum.PathStatus.Success then
-    local status=path.Status;path:Destroy();return false,"aucun chemin hors tapis : "..tostring(failure or status)
-   end
-   local points=path:GetWaypoints();local previous=root.Position
-   for _,point in ipairs(points)do
-    for _,zone in ipairs(zones)do
-     if crosses(zone,previous,point.Position)then path:Destroy();return false,"chemin refuse : traverse un tapis"end
-    end
-    previous=point.Position
-   end
-   local blocked=false
-   local currentIndex=1
-   local connection=path.Blocked:Connect(function(index)if index>=currentIndex then blocked=true end end)
-   local success,why=true,nil
-   for index,point in ipairs(points)do
-    currentIndex=index
-    if blocked then success=false;why="obstacle";break end
-    -- Recheck the actual segment after braking/overshoot, not just the computed path.
-    for _,zone in ipairs(zones)do if crosses(zone,root.Position,point.Position)then success=false;why="tapis sur le segment";break end end
-    if not success then break end
-    if point.Action==Enum.PathWaypointAction.Jump then humanoid.Jump=true end
-    success,why=moveActivity(point.Position,token,interruptForEgg)
-    if not success then break end
-   end
-   connection:Disconnect();path:Destroy()
-   if success then return true end
-   stopMovement(true)
-   if why~="obstacle"then return false,why end
+
+  -- Visibility graph around expanded treadmill corners. The native navmesh
+  -- can ignore a newly-created modifier for its first computation; never rely
+  -- on that modifier alone to select the side of the belt.
+  local nodes={root.Position,destination}
+  local function clearSegment(a,b)
+   for _,zone in ipairs(zones)do if crosses(zone,a,b)then return false end end
+   return true
   end
-  return false,"chemin bloque apres trois calculs"
+  for _,zone in ipairs(zones)do
+   if math.abs(zone.CFrame:PointToObjectSpace(root.Position).Y)<zone.Size.Y/2+12 then
+    local x,z=zone.Size.X/2+7,zone.Size.Z/2+7
+    for _,offset in ipairs({Vector3.new(-x,0,-z),Vector3.new(-x,0,z),Vector3.new(x,0,-z),Vector3.new(x,0,z)})do
+     local corner=zone.CFrame:PointToWorldSpace(offset)
+     corner=Vector3.new(corner.X,root.Position.Y,corner.Z)
+     local free=true
+     for _,other in ipairs(zones)do if inside(other,corner,4)then free=false;break end end
+     if free then table.insert(nodes,corner)end
+    end
+   end
+  end
+  local costs,parents,visited={[1]=0},{},{}
+  for _=1,#nodes do
+   local best
+   for index in ipairs(nodes)do
+    if not visited[index]and costs[index]and(not best or costs[index]<costs[best])then best=index end
+   end
+   if not best then break end
+   if best==2 then break end
+   visited[best]=true
+   for index,point in ipairs(nodes)do
+    if not visited[index]and index~=best and clearSegment(nodes[best],point)then
+     local cost=costs[best]+distanceXZ(nodes[best],point)
+     if not costs[index]or cost<costs[index]then costs[index]=cost;parents[index]=best end
+    end
+   end
+  end
+  if not costs[2]then return false,"aucun contournement des tapis disponible"end
+  local route,index={},2
+  while index~=1 do
+   table.insert(route,1,nodes[index]);index=parents[index]
+   if not index then return false,"contournement incomplet"end
+  end
+  for _,target in ipairs(route)do
+   local arrived=false
+   for attempt=1,3 do
+    if not activityValid(token,character)then return false,"trajet annule"end
+    local path=game:GetService("PathfindingService"):CreatePath({
+     AgentRadius=2.5,AgentHeight=5,AgentCanJump=true,WaypointSpacing=4,
+     Costs={SEA_NoTreadmill=math.huge}
+    })
+    local computed,failure=pcall(function()path:ComputeAsync(root.Position,target)end)
+    if not computed or path.Status~=Enum.PathStatus.Success then
+     local status=path.Status;path:Destroy()
+     return false,"aucun chemin vers le point de contournement : "..tostring(failure or status)
+    end
+    local points=path:GetWaypoints();local previous=root.Position
+    for _,point in ipairs(points)do
+     if not clearSegment(previous,point.Position)then
+      path:Destroy();return false,"chemin natif hors du contournement : tapis detecte"
+     end
+     previous=point.Position
+    end
+    local blocked=false
+    local currentIndex=1
+    local connection=path.Blocked:Connect(function(n)if n>=currentIndex then blocked=true end end)
+    local success,why=true,nil
+    for n,point in ipairs(points)do
+     currentIndex=n
+     if blocked then success=false;why="obstacle";break end
+     if not clearSegment(root.Position,point.Position)then success=false;why="tapis sur le segment";break end
+     if point.Action==Enum.PathWaypointAction.Jump then humanoid.Jump=true end
+     success,why=moveActivity(point.Position,token,interruptForEgg)
+     if not success then break end
+    end
+    connection:Disconnect();path:Destroy()
+    stopMovement(true)
+    if success then arrived=true;break end
+    if why~="obstacle"then return false,why end
+   end
+   if not arrived then return false,"contournement bloque apres trois calculs"end
+  end
+  return true
  end)
  folder:Destroy()
  if not ok then stopMovement(true);return false,tostring(reached)end
