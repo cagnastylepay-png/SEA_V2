@@ -1,4 +1,4 @@
--- Ovora observer: passive reporting only; no automatic teleportation.
+-- Ovora observer: reporting and periodic standalone clicks; no automatic teleportation.
 if shared.__SEAObserverController and not shared.__SEAObserverController.Destroyed then return shared.__SEAObserverController end
 local O={Listeners={},SocketConnections={},ClientKind="observer",Serial=0,Connections={},Destroyed=false,Ready=false,IdentityReady=false,EggDirty=true,PlayerDirty=true,
  EggRevision=0,PlayerRevision=0,NextConnect=0,Backoff=2}
@@ -7,6 +7,40 @@ local Http=game:GetService("HttpService")
 local RS=game:GetService("ReplicatedStorage")
 local player=Players.LocalPlayer
 if not player then return end
+-- Minute clicks belong only to standalone Observers; Hub/Admin own their inputs.
+O.NextClickAt=os.clock()+60
+function O.TickClicks(now)
+ if O.Destroyed or O.ClientKind~="observer"then O.NextClickAt=now+60;return end
+ if O.ClickBusy or now<O.NextClickAt then return end
+ O.NextClickAt=now+60
+ local env=type(getgenv)=="function"and getgenv()or getfenv()
+ local press,release,click=env.mouse1press,env.mouse1release,env.mouse1click
+ local paired=type(press)=="function"and type(release)=="function"
+ if not paired and type(click)~="function"then return end
+ O.ClickBusy=true
+ task.spawn(function()
+  local held=false
+  local ok,why=pcall(function()
+   if O.Destroyed or O.ClientKind~="observer"then return end
+   local camera=workspace.CurrentCamera
+   if camera and type(env.mousemoveabs)=="function"then
+    local center=camera.ViewportSize/2
+    env.mousemoveabs(math.floor(center.X),math.floor(center.Y))
+   end
+   for _=1,math.random(3,4)do
+    if O.Destroyed or O.ClientKind~="observer"then break end
+    if paired then
+     held=true;press();task.wait(.03);release();held=false
+    else click()end
+    task.wait(.15)
+   end
+  end)
+  if held then pcall(release)end
+  O.ClickBusy=false
+  if not ok and not O.Destroyed then warn("[Observer] Clics périodiques : "..tostring(why))end
+ end)
+end
+
 function O.Status(status,good)
  O.LastStatus=status;O.Connected=good==true
 end
@@ -231,6 +265,7 @@ O.Refresh()
 task.spawn(function()
  while not O.Destroyed do
   local now=os.clock()
+  O.TickClicks(now)
   local cycle=tostring(O.Cycle.ActivePeriodIndexAt(O.Clock.Now()))
   if cycle~=O.CurrentCycle then O.CurrentCycle=cycle;O.Refresh()end
   if not O.Syncing and O.SnapshotCycle~=cycle and now>=(O.NextSync or 0)then O.Refresh()end
