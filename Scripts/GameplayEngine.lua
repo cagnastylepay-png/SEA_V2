@@ -3442,6 +3442,29 @@ function FusionModules.Helpers.MoveForFishing(destination,viaStart,active)
  if not ok then error(reached)end
  return reached
 end
+function FusionModules.Helpers.ReturnForFishingEgg()
+ local hop=FusionModules.RemoteHop
+ local target=hop.LocalReturnTarget
+ if not target then return false end
+ local runtime=FusionModules.AdminRuntime
+ if not runtime then return false end
+ runtime.StopFishing()
+ setStatus("Pêche interrompue : retour en bateau pour "..tostring(target.name or target.uid))
+ if player:GetAttribute("InAlienLagoon")==true then
+  local ok,result=pcall(runtime.LeaveFishingLagoon)
+  if not ok or not result then
+   if serverHopPending or not automaticMode then return true end
+   error("Retour du lagon : "..tostring(result))
+  end
+ end
+ if serverHopPending or not automaticMode then return true end
+ hop.LocalReturnTarget=nil
+ FusionModules.Arrival.Uid=target.uid
+ FusionModules.Arrival.Deadline=os.clock()+CONFIG.ArrivalTargetTimeout
+ FusionModules.Reporting.MarkSettingsDirty()
+ autoActivity="IDLE"
+ return true
+end
 function FusionModules.Helpers.RequestFishingEgg(selected,rate)
  if FusionModules.RemoteHop.Pending then return end
  local now=DateTime.now().UnixTimestampMillis
@@ -3450,6 +3473,7 @@ function FusionModules.Helpers.RequestFishingEgg(selected,rate)
   name=getAnimalName(selected),category=selected.AssetCategory,areaId=selected.AreaId or selected.areaId or selected.zone,incomePerSecond=rate or getRatePerSecond(selected)or 0,
   expiresAt=now+30000
  }})
+ FusionModules.Helpers.ReturnForFishingEgg()
 end
 function FusionModules.Helpers.FishingIdle(token)
  local runtime=FusionModules.AdminRuntime
@@ -3463,7 +3487,8 @@ function FusionModules.Helpers.FishingIdle(token)
  while runtime.FishingRun==fishingRun and activityValid(token,player.Character)and automaticMode and FusionModules.Helpers.FishingMode()and runtime.Fishing do
   syncQueue()
   local selected,rate=selectBest()
-  if selected then FusionModules.Helpers.RequestFishingEgg(selected,rate)end
+  if selected then FusionModules.Helpers.RequestFishingEgg(selected,rate)
+  elseif FusionModules.RemoteHop.LocalReturnTarget then FusionModules.Helpers.ReturnForFishingEgg()end
   task.wait(.1)
  end
  if runtime.FishingRun==fishingRun then runtime.StopFishing()end
@@ -4159,6 +4184,11 @@ function FusionModules.RemoteHop.Receive(message)
  end
  local expiry,serverTime=message.target.expiresAt,message.serverTime
  if type(expiry)~="number" or type(serverTime)~="number" or expiry<=serverTime or expiry-serverTime>1200000 then hop.Pending=nil;return end
+ if message.target.jobId==game.JobId then
+  hop.LocalReturnTarget=message.target
+  hop.Note("local-return:"..tostring(message.target.uid),"Oeuf local : retour en bateau depuis le lagon",message.target)
+  return
+ end
  hop.Note("received:"..tostring(message.requestId),"Cible recue de Render",message.target)
  hop.Pending={Target=message.target,Deadline=os.clock()+(expiry-serverTime)/1000,Id=message.requestId,Forced=message.force==true}
  if message.force==true then hop.RetryAt=0 end
@@ -4170,6 +4200,7 @@ function FusionModules.RemoteHop.Try()
  if hop.Processing or serverHopPending or not hop.Pending or os.clock()<hop.RetryAt then return false end
  if (FusionModules.FishingBusy and not FusionModules.Helpers.FishingMode())or FusionModules.MutationBusy or FusionModules.ManualBusy then return false end
  local request=hop.Pending
+ if request.Target.jobId==game.JobId then hop.LocalReturnTarget=request.Target;hop.Pending=nil;return false end
  if os.clock()>=request.Deadline or not hop.Validate(request.Target,request.Forced)then
   hop.Note("invalid:"..tostring(request.Id),os.clock()>=request.Deadline and "Cible expiree avant le depart"or "Conditions locales non remplies avant le depart",request.Target)
   hop.Pending=nil;return false
