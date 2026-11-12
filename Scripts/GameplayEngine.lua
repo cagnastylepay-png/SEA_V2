@@ -96,6 +96,7 @@ function FusionModules.Helpers.InIncomeRange(key,rate)
 end
 
 FusionModules.Options.AutoPlotUpgrade=false
+FusionModules.Options.IdleMode="Treadmill"
 FusionModules.Options.AutoTreadmillUpgrade=false
 FusionModules.Options.AutoHelp=false
 FusionModules.Options.AutoHelpMin=2e9
@@ -145,6 +146,8 @@ function FusionModules.Helpers.SetOption(key,value)
  if current==nil then return false,"Parametre inconnu"end
  if key=="AutoEggsMaxBiome"then
   if not FusionModules.Helpers.ValidMaxBiome(value)then return false,"Biome inconnu"end
+ elseif key=="IdleMode"then
+  if value~="Treadmill"and value~="Fishing"then return false,"Mode de déplacement invalide"end
  elseif key=="HelpFavorites"then
   if not FusionModules.Helpers.ValidHelpFavorites(value)then return false,"Favoris invalides"end
  elseif type(current)=="boolean"then
@@ -175,6 +178,7 @@ function FusionModules.Helpers.RestoreOptions(saved)
   end
  end
  if candidate.AutoEggsMin>candidate.AutoEggsMax or candidate.AutoSellMin>candidate.AutoSellMax or candidate.AutoOpenMin>candidate.AutoOpenMax or candidate.AutoPlaceMin>candidate.AutoPlaceMax or candidate.AutoFuseMin>candidate.AutoFuseMax then return false end
+ if candidate.IdleMode~="Treadmill"and candidate.IdleMode~="Fishing"then return false end
  if candidate.AutoSellAnimalsMin>candidate.AutoSellAnimalsMax then return false end
  if not FusionModules.Helpers.ValidMaxBiome(candidate.AutoEggsMaxBiome)then return false end
  if not FusionModules.Helpers.ValidHelpFavorites(candidate.HelpFavorites)then return false end
@@ -197,6 +201,7 @@ local refreshFlightLog
 local stopAfterFlight = false
 local queuedEggs = {}
 function FusionModules.Helpers.ShouldRun()
+ if FusionModules.Options.IdleMode=="Fishing"then return true end
  for key,value in pairs(FusionModules.Options)do if key~="QueueNearest"and type(value)=="boolean"and value then return true end end
  return next(queuedEggs)~=nil
 end
@@ -977,7 +982,7 @@ do
    local options=table.clone(FusionModules.Options)
    report.SettingsDirty=false
    report.SettingsPending=revision
-   local ok=pcall(function()report.Socket:Send(HttpService:JSONEncode({version=1,type="settings.snapshot",sessionId=report.SessionId,revision=revision,options=options,automationActive=report.AutomationActive(),automationEnabled=automaticMode and not queuePaused and not stopAfterFlight and not destroyed,automationReason=report.AutomationReason(),visitedJobIds=report.VisitedJobs(),missingCategories=report.MissingCategories()}))end)
+   local ok=pcall(function()report.Socket:Send(HttpService:JSONEncode({version=1,type="settings.snapshot",sessionId=report.SessionId,revision=revision,options=options,fishingActive=FusionModules.Helpers.FishingActive(),automationActive=report.AutomationActive(),automationEnabled=automaticMode and not queuePaused and not stopAfterFlight and not destroyed,automationReason=report.AutomationReason(),visitedJobIds=report.VisitedJobs(),missingCategories=report.MissingCategories()}))end)
    if not ok then report.SettingsDirty=true end
    task.delay(5,function()
     if destroyed or report.Serial~=serial or report.SettingsPending~=revision or not report.SettingsAllowed then return end
@@ -1085,7 +1090,7 @@ do
    while not destroyed and report.Enabled do
     local ok,why=pcall(function()
      report.SyncObserver()
-     local state=tostring(report.AutomationActive())..":"..report.AutomationReason()
+     local state=tostring(report.AutomationActive())..":"..report.AutomationReason()..":"..tostring(FusionModules.Helpers.FishingActive())
      if state~=report.LastAutomationState then report.LastAutomationState=state;report.MarkSettingsDirty()end
     end)
     if not ok then report.Log("Observer bridge : %s",tostring(why))end
@@ -2426,6 +2431,7 @@ local function moveActivity(destination, token, interruptForEgg, nextDestination
 	local previous = root.Position
 	local nextCommand = 0
 	while true do
+  if autoActivity=="TO_FISHING"and FusionModules.FishingMoveValid and not FusionModules.FishingMoveValid()then stopMovement(true);return false,"pêche interrompue"end
   if autoActivity=="TO_FARM"and FusionModules.CollectionReturnPending then stopMovement(true);return false,"COLLECTION_STOPPED"end
   if autoActivity=="TO_UPGRADE"and FusionModules.UpgradeMoveValid and not FusionModules.UpgradeMoveValid()then stopMovement(true);return false,"upgrade interrompue : priorite au vol ou option OFF"end
   if autoActivity=="TO_TREADMILL"and not FusionModules.Options.AutoTreadmill then stopMovement(true);return false,"tapis OFF"end
@@ -3410,7 +3416,68 @@ do
  end
 end
 
+function FusionModules.Helpers.FishingMode()
+ return FusionModules.Reporting.ClientKind=="admin"and FusionModules.Options.IdleMode=="Fishing"
+end
+function FusionModules.Helpers.FishingActive()
+ local runtime=FusionModules.AdminRuntime
+ return FusionModules.Helpers.FishingMode()and(runtime and runtime.Fishing==true or player:GetAttribute("InAlienLagoon")==true)
+end
+function FusionModules.Helpers.MoveForFishing(destination,viaStart,active)
+ local character,_,root=getCharacterParts()
+ if not root or not active()then return false end
+ local token=generation
+ autoActivity="TO_FISHING";FusionModules.FishingMoveValid=active
+ local ok,reached=pcall(function()
+  if viaStart then
+   local departure=assert(getStartAreaDestination(),"StartArea indisponible")
+   local nextPoint=Vector3.new(destination.X,departure.Y,destination.Z)
+   if not moveActivity(departure,token,false,nextPoint)then return false end
+  end
+  if not active()then return false end
+  return moveActivity(Vector3.new(destination.X,root.Position.Y,destination.Z),token,false)
+ end)
+ FusionModules.FishingMoveValid=nil
+ stopMovement(true)
+ if not ok then error(reached)end
+ return reached
+end
+function FusionModules.Helpers.RequestFishingEgg(selected,rate)
+ if FusionModules.RemoteHop.Pending then return end
+ local now=DateTime.now().UnixTimestampMillis
+ FusionModules.RemoteHop.Receive({requestId="fishing-local-"..selected.Uid,serverTime=now,target={
+  placeId=tostring(game.PlaceId),jobId=game.JobId,uid=selected.Uid,
+  name=getAnimalName(selected),category=selected.AssetCategory,areaId=selected.AreaId or selected.areaId or selected.zone,incomePerSecond=rate or getRatePerSecond(selected)or 0,
+  expiresAt=now+30000
+ }})
+end
+function FusionModules.Helpers.FishingIdle(token)
+ local runtime=FusionModules.AdminRuntime
+ if not runtime or not runtime.Initialized then task.wait(.5);return true end
+ local exited,reason=leaveTreadmill(token)
+ if not exited then return false,reason end
+ stopMovement(true)
+ if os.clock()<(runtime.FishingRetryAt or 0)then task.wait(.5);return true end
+ runtime.SetFishing(true,true)
+ local fishingRun=runtime.FishingRun
+ while runtime.FishingRun==fishingRun and activityValid(token,player.Character)and automaticMode and FusionModules.Helpers.FishingMode()and runtime.Fishing do
+  syncQueue()
+  local selected,rate=selectBest()
+  if selected then FusionModules.Helpers.RequestFishingEgg(selected,rate)end
+  task.wait(.1)
+ end
+ if runtime.FishingRun==fishingRun then runtime.StopFishing()end
+ return true
+end
+
 local function idleOnTreadmill(token)
+ if FusionModules.Helpers.FishingMode()then return FusionModules.Helpers.FishingIdle(token)end
+ if player:GetAttribute("InAlienLagoon")==true and FusionModules.Reporting.ClientKind=="admin"then
+  local runtime=FusionModules.AdminRuntime
+  if not runtime or not runtime.Initialized then task.wait(.5);return true end
+  local ok,result=pcall(runtime.LeaveFishingLagoon)
+  if not ok or not result then return false,tostring(result or "Retour du lagon interrompu")end
+ end
  if not FusionModules.Options.AutoTreadmill then
   if treadmillAssigned then leaveTreadmill(token)end
   autoActivity="IDLE";setStatus("En attente : AutoTreadmill OFF");task.wait(CONFIG.ScanInterval);return true
@@ -3448,7 +3515,7 @@ local function idleOnTreadmill(token)
 	if destroyed or not autoEnabled or generation ~= token then return true end
 	setStatus("TREADMILL : entrainement, attente d'un oeuf...")
 	while autoEnabled and generation == token and automaticMode and not queuePaused
-		and FusionModules.Options.AutoTreadmill and next(queuedEggs) == nil and not activityRecheckPending and not FusionModules.Butterflies.Available() and not destroyed do
+		and not FusionModules.Helpers.FishingMode()and FusionModules.Options.AutoTreadmill and next(queuedEggs) == nil and not activityRecheckPending and not FusionModules.Butterflies.Available() and not destroyed do
 		serviceWallMaintenance(token)
   if FusionModules.AdminRuntime and FusionModules.AdminRuntime.ProgressTravelling and FusionModules.AdminRuntime.ProgressTravelling()then task.wait(CONFIG.ScanInterval);continue end
 		if not treadmillAssigned and autoActivity ~= "TREADMILL" then return true end
@@ -3557,6 +3624,9 @@ local function worker(token)
 		else
 			selected, rate = selectBest()
 		end
+		if selected and FusionModules.Helpers.FishingMode()and player:GetAttribute("InAlienLagoon")==true then
+   FusionModules.Helpers.RequestFishingEgg(selected,rate);task.wait(.2);continue
+  end
 		if selected then
 			if selected.Uid==FusionModules.Arrival.Uid then FusionModules.Arrival.Clear("Debut du vol de la cible")end
 			searchWaitForEgg = false
@@ -3627,13 +3697,13 @@ local function worker(token)
 			end
 		else
 			directNext = false
-			if automaticMode and FusionModules.Butterflies.Available() then
+			if automaticMode and not FusionModules.Helpers.FishingMode()and FusionModules.Butterflies.Available() then
 				FusionModules.Butterflies.Idle(token)
 			elseif automaticMode then
 				serverSearchState = "OFF"
 				local ok, reason = idleOnTreadmill(token)
 				if not autoEnabled or generation ~= token then return end
-				if not ok then stopAutomation("Tapis : " .. tostring(reason)); return end
+				if not ok then stopAutomation((FusionModules.Helpers.FishingMode()and"Pêche : "or"Tapis : ") .. tostring(reason)); return end
 			else
 				stopAutomation("File terminee", false)
 				return
@@ -4065,14 +4135,15 @@ function FusionModules.RemoteHop.Validate(target, forced)
  local report=FusionModules.Reporting
  if FusionModules.Reporting.ClientKind~="admin" then return false end
  if destroyed or not ready or not report or not report.Ready or not report.TeleportAllowed or not report.SettingsAllowed or (not forced and not report.AutomationActive()) then return false end
- if type(target)~="table" or target.placeId~=tostring(game.PlaceId) or type(target.jobId)~="string" or target.jobId=="" or #target.jobId>128 or target.jobId==game.JobId then return false end
+ if type(target)~="table" or target.placeId~=tostring(game.PlaceId) or type(target.jobId)~="string" or target.jobId=="" or #target.jobId>128 or (target.jobId==game.JobId and not FusionModules.Helpers.FishingActive()) then return false end
  if forced then return true end
  local rate=target.incomePerSecond
  if type(rate)~="number" or rate~=rate or rate<0 or rate>=math.huge then return false end
   local missing=FusionModules.Options.AutoIndex and report.MissingCategories()[target.category]==true
  if not FusionModules.Helpers.AllowedBiome(target)then return false end
- if not missing and not (FusionModules.Options.AutoEggs and rate>=FusionModules.Options.AutoEggsMin and rate<=FusionModules.Options.AutoEggsMax)then return false end
- if visitedServers[target.jobId] or target.carrierUserId or target.state=="Carried" or target.state=="Claimed" or target.observationOnly then return false end
+ local special=FusionModules.Helpers.FishingActive()and FusionModules.Options.AutoEggs and FusionModules.Helpers.IsAlwaysEligibleRarity({AssetCategory=target.category})
+ if not missing and not special and not (FusionModules.Options.AutoEggs and rate>=FusionModules.Options.AutoEggsMin and rate<=FusionModules.Options.AutoEggsMax)then return false end
+ if (visitedServers[target.jobId]and not(target.jobId==game.JobId and FusionModules.Helpers.FishingActive())) or target.carrierUserId or target.state=="Carried" or target.state=="Claimed" or target.observationOnly then return false end
  return true
 end
 function FusionModules.RemoteHop.Receive(message)
@@ -4097,13 +4168,14 @@ function FusionModules.RemoteHop.Try()
  if FusionModules.BetweenFlights then return false end
  local hop=FusionModules.RemoteHop
  if hop.Processing or serverHopPending or not hop.Pending or os.clock()<hop.RetryAt then return false end
- if FusionModules.FishingBusy or FusionModules.MutationBusy or FusionModules.ManualBusy then return false end
+ if (FusionModules.FishingBusy and not FusionModules.Helpers.FishingMode())or FusionModules.MutationBusy or FusionModules.ManualBusy then return false end
  local request=hop.Pending
  if os.clock()>=request.Deadline or not hop.Validate(request.Target,request.Forced)then
   hop.Note("invalid:"..tostring(request.Id),os.clock()>=request.Deadline and "Cible expiree avant le depart"or "Conditions locales non remplies avant le depart",request.Target)
   hop.Pending=nil;return false
  end
- local immediate=request.Forced or request.Target.incomePerSecond>=FusionModules.Options.TeleportInstantMin
+ local fishingDeparture=FusionModules.Helpers.FishingActive()
+ local immediate=fishingDeparture or request.Forced or request.Target.incomePerSecond>=FusionModules.Options.TeleportInstantMin
  if not immediate then
   if next(queuedEggs)~=nil or currentCycle or inventoryPlacementBusy or placementRequest or hatchInProgress or FusionModules.Pending() or (inFlightRequest and not inFlightRequest.done)then
    hop.Note("waiting:"..tostring(request.Id),"Teleportation en attente : file locale ou action en cours",request.Target)
@@ -4126,6 +4198,7 @@ function FusionModules.RemoteHop.Try()
    if hop.Pending~=request or os.clock()>=request.Deadline or not hop.Validate(request.Target,request.Forced) then release();return end
    if not immediate and (next(queuedEggs)~=nil or currentCycle)then hop.Processing=false;return end
    local target=request.Target
+   if FusionModules.AdminRuntime and FusionModules.AdminRuntime.Fishing then FusionModules.AdminRuntime.StopFishing()end
    -- Cancel old generation before dispatch so movement and optional actions cannot restart.
    serverHopPending=true
    generation+=1
@@ -4382,7 +4455,10 @@ shared.__AutoSAEController = {Destroy = destroy, Gui = gui, Reporting = FusionMo
    if destroyed or not ready or not FusionModules.FishingBusy or not FusionModules.Options.AutoSell then return {} end
    return FusionModules.Helpers.inventoryEggsBelowMinimum(inventoryEggRecords())
   end,
-  FishingLock=function(value)FusionModules.FishingBusy=value==true end,
+  MoveForFishing=FusionModules.Helpers.MoveForFishing,
+  FishingTravelValid=function()return not destroyed and automaticMode and autoEnabled and not queuePaused and not stopAfterFlight and not serverHopPending end,
+  FishingAutomaticValid=function()return not destroyed and automaticMode and autoEnabled and not queuePaused and not stopAfterFlight and not serverHopPending and FusionModules.Helpers.FishingMode()end,
+  FishingLock=function(value)FusionModules.FishingBusy=value==true;FusionModules.Reporting.MarkSettingsDirty()end,
   CanStartFishing=function()local carry=readCarry();return carry and not carry.IsCarrying and not treadmillPending and not treadmillAssigned and not(inFlightRequest and not inFlightRequest.done) end,
   IsEnabled=function()return automaticMode end,
   MutationLock=function(value)FusionModules.MutationBusy=value==true end,

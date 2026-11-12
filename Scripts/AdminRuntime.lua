@@ -467,14 +467,48 @@ return function(ctx)
  local function fishingLog(message)
   print("[SEA AutoFishing] "..message)
  end
- function A.SetFishing(enabled)
+ function A.PrepareFishingTravel(context)
+  if not A.FishingTravelModule then
+   local loader,err=loadstring(game:HttpGet("https://raw.githubusercontent.com/cagnastylepay-png/SEA_V2/main/Scripts/AdminFishingTravel.lua"),"SEA_V2/AdminFishingTravel")
+   assert(loader,err);A.FishingTravelModule=loader()
+  end
+  return A.FishingTravelModule(context)
+ end
+ function A.LeaveFishingLagoon()
+  return A.PrepareFishingTravel({Exit=true,Active=ctx.FishingTravelValid,Move=ctx.MoveForFishing,Status=ctx.InventoryNotice})
+ end
+ A.StopFishing=stopFishing
+ function A.SetFishing(enabled,automatic)
   assert(not ctx.LocalOnly and ctx.FishingLock and type(enabled)=="boolean","Mode pêche indisponible")
-  if not enabled then stopFishing();ctx.SetEnabled(false);fishingLog("Arrêt demandé");return true end
+  if not enabled then
+   stopFishing()
+   if not automatic then ctx.SetEnabled(false)end
+   fishingLog("Arrêt demandé")
+   return true
+  end
   if A.Fishing then return true end
-  fishingLog("Démarrage demandé")
   local env=type(getgenv)=="function"and getgenv()or getfenv()
-  local move,press,release,click=env.mousemoveabs,env.mouse1press,env.mouse1release,env.mouse1click
-  assert(type(move)=="function"and type(press)=="function"and type(release)=="function"and type(click)=="function","Entrées souris indisponibles")
+  local move,press,release=env.mousemoveabs,env.mouse1press,env.mouse1release
+  assert(type(move)=="function"and type(press)=="function"and type(release)=="function","Entrées souris indisponibles")
+  if not automatic then
+   ctx.SetEnabled(false)
+   assert(waitUntil(function()return not ctx.Busy()and ctx.CanStartFishing()end,35),"AUTO n’a pas terminé son action")
+  end
+  local run={}
+  A.Fishing=true;A.FishingRun=run;A.FishingAutomatic=automatic==true
+  ctx.FishingLock(true)
+  local function active()
+   return A.FishingRun==run and not A.Destroyed and(not automatic or ctx.FishingAutomaticValid())
+  end
+  local function waitFor(test,seconds)
+   local deadline=os.clock()+seconds
+   repeat
+    if not active()then return false end
+    if test()then return true end
+    task.wait(.05)
+   until os.clock()>=deadline
+   return false
+  end
   local function visible(name)
    local gui=player:FindFirstChild("PlayerGui")
    local ui=gui and gui:FindFirstChild("FishingUI")
@@ -487,8 +521,13 @@ return function(ctx)
    end
    return false
   end
-  ctx.SetEnabled(false)
-  if not waitUntil(function()return not ctx.Busy()and ctx.CanStartFishing()end,35)then ctx.SetEnabled(false);error("AUTO n’a pas terminé son action")end
+  fishingLog(automatic and"Démarrage automatique vers le lagon"or"Démarrage manuel")
+  task.defer(function()
+   local ok,why=pcall(function()
+    if automatic then
+     A.PrepareFishingTravel({Active=active,Move=ctx.MoveForFishing,Status=ctx.InventoryNotice})
+    end
+    assert(active(),"Pêche interrompue")
   local character=assert(player.Character,"Personnage indisponible")
   local root=assert(character:FindFirstChild("HumanoidRootPart"),"Personnage indisponible")
   local camera=assert(workspace.CurrentCamera,"Caméra indisponible")
@@ -515,7 +554,6 @@ return function(ctx)
   }
   A.Signature=nil
   pcall(A.Publish,true)
-  local run={};ctx.FishingLock(true);A.Fishing=true;A.FishingRun=run
   A.FishingPoseConnection=game:GetService("RunService").RenderStepped:Connect(function()
    if A.FishingRun~=run or A.Destroyed then return end
    local currentRoot=player.Character and player.Character:FindFirstChild("HumanoidRootPart")
@@ -530,57 +568,57 @@ return function(ctx)
     currentCamera.Focus=savedFocus
    end
   end)
-  local function untilVisible(test,seconds)
-   local deadline=os.clock()+seconds
-   repeat if A.FishingRun~=run or A.Destroyed then return false end;if test()then return true end;task.wait(.05)until os.clock()>=deadline
-   return false
-  end
-  task.defer(function()
-   local ok,why=pcall(function()
+
     local attempt=0
-    while A.FishingRun==run and not A.Destroyed do
+    while active()do
      attempt+=1
      local prefix="Essai "..attempt.." — "
-     ctx.InventoryNotice("AutoFishing : essai "..attempt.." — attente du lancer")
-     fishingLog(prefix.."Attente de l’indication de lancer")
-     if not untilVisible(function()return visible("Tooltip")and not visible("Reveal")end,15)then error("Lancer indisponible. Équipe une canne et place-toi au bord de l’eau.")end
-     local cam=assert(workspace.CurrentCamera,"Caméra indisponible")
-     local center=cam.ViewportSize/2
-     move(math.floor(center.X),math.floor(center.Y))
-     A.ReleaseFishing=release;press();task.wait(1.05)
-     if A.FishingRun~=run or A.Destroyed then return end
-     release();A.ReleaseFishing=nil
-     fishingLog(prefix.."Lancer relâché après 1,05 s, attente d’une prise")
-     assert(untilVisible(function()return visible("Reel")or visible("Reveal")end,30),"Aucune prise détectée")
-     ctx.InventoryNotice("AutoFishing : essai "..attempt.." — prise détectée")
-     fishingLog(prefix.."Prise détectée, attente du résultat")
-     local clicks=0
-     local completed=untilVisible(function()
-      if visible("Reveal")then return true end
-      if visible("Reel")then
-       local camera=assert(workspace.CurrentCamera,"Caméra indisponible")
-       local point=camera.ViewportSize/2
-       move(math.floor(point.X),math.floor(point.Y))
-       A.ReleaseFishing=release
-       press()
-       task.wait(.03)
-       release()
-       A.ReleaseFishing=nil
-       clicks+=1
-       if clicks==1 or clicks%25==0 then
-        fishingLog(prefix..clicks.." clics envoyés")
-       end
+     local caught,reason=pcall(function()
+      ctx.InventoryNotice("AutoFishing : essai "..attempt.." — attente du lancer")
+      fishingLog(prefix.."Attente du lancer ou reprise du mini-jeu")
+      assert(waitFor(function()return visible("Reel")or visible("Tooltip")and not visible("Reveal")end,20),"Lancer indisponible")
+      if not visible("Reel")then
+       local cam=assert(workspace.CurrentCamera,"Caméra indisponible")
+       local center=cam.ViewportSize/2
+       move(math.floor(center.X),math.floor(center.Y))
+       A.ReleaseFishing=release;press()
+       waitFor(function()return false end,1.05)
+       assert(active(),"Pêche interrompue")
+       release();A.ReleaseFishing=nil
+       fishingLog(prefix.."Lancer relâché après 1,05 s")
+       assert(waitFor(function()return visible("Reel")or visible("Reveal")end,30),"Aucune prise détectée")
       end
-      return false
-     end,15)
-     assert(completed,"Résultat non affiché après "..clicks.." clics envoyés")
-     fishingLog(prefix.."Résultat affiché")
-     task.wait(1)
-     sellFishingEggs()
+      ctx.InventoryNotice("AutoFishing : essai "..attempt.." — prise détectée")
+      local clicks=0
+      local completed=waitFor(function()
+       if visible("Reveal")then return true end
+       if visible("Reel")then
+        local cam=assert(workspace.CurrentCamera,"Caméra indisponible")
+        local point=cam.ViewportSize/2
+        move(math.floor(point.X),math.floor(point.Y))
+        A.ReleaseFishing=release;press();task.wait(.03)
+        release();A.ReleaseFishing=nil
+        clicks+=1
+        if clicks==1 or clicks%25==0 then fishingLog(prefix..clicks.." clics envoyés")end
+       end
+       return false
+      end,20)
+      assert(completed,"Résultat non affiché après "..clicks.." clics")
+      fishingLog(prefix.."Résultat affiché")
+     end)
+     if A.ReleaseFishing then pcall(A.ReleaseFishing);A.ReleaseFishing=nil end
+     if not active()then return end
+     if not caught then
+      warn("[SEA AutoFishing] "..tostring(reason))
+      ctx.InventoryNotice("AutoFishing : "..tostring(reason).." — nouvel essai")
+     end
+     waitFor(function()return false end,caught and 1 or 2)
+     if active()then sellFishingEggs()end
     end
    end)
    if A.FishingRun==run and not A.Destroyed then
-    stopFishing();ctx.SetEnabled(was)
+    stopFishing()
+    if automatic then A.FishingRetryAt=os.clock()+10 else ctx.SetEnabled(false)end
     if not ok then
      warn("[SEA AutoFishing] "..tostring(why))
      ctx.InventoryNotice("AutoFishing : "..tostring(why))
