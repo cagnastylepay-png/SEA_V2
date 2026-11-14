@@ -96,6 +96,7 @@ function FusionModules.Helpers.InIncomeRange(key,rate)
 end
 
 FusionModules.Options.AutoSkyfall=false
+FusionModules.Options.AutoSlickRick=false
 FusionModules.Options.AutoPlotUpgrade=false
 FusionModules.Options.IdleMode="Treadmill"
 FusionModules.Options.AutoCosmicEclipse=false
@@ -193,7 +194,7 @@ end
 FusionModules.Busy = false
 FusionModules.Request = shared.__AutoSAEFusionRequest
 function FusionModules.Pending()
-	return FusionModules.FishingBusy or FusionModules.ManualBusy or FusionModules.MutationBusy or FusionModules.Busy or (FusionModules.Request and not FusionModules.Request.done)or(FusionModules.Help and FusionModules.Help.DropRequest and not FusionModules.Help.DropRequest.done)
+	return (FusionModules.SlickRick and FusionModules.SlickRick.Purchasing) or FusionModules.FishingBusy or FusionModules.ManualBusy or FusionModules.MutationBusy or FusionModules.Busy or (FusionModules.Request and not FusionModules.Request.done)or(FusionModules.Help and FusionModules.Help.DropRequest and not FusionModules.Help.DropRequest.done)
 end
 local EggSaleRemote
 local GameplayBalance
@@ -379,7 +380,7 @@ local function loadSettings()
 		minimumRatePerSecond = minimum * 1e9
 	end
  for key,value in pairs(FusionModules.Options)do
-  if type(value)=="boolean"and key~="AutoCosmicEclipse"and key~="AutoSkyfall"and key~="AutoPlotUpgrade"and key~="AutoTreadmillUpgrade"and key~="AutoHelp"and key~="AutoMutations"and key~="AutoSellAnimals"and not key:match("^Mutation")then FusionModules.Options[key]=automaticMode end
+  if type(value)=="boolean"and key~="AutoCosmicEclipse"and key~="AutoSkyfall"and key~="AutoSlickRick"and key~="AutoPlotUpgrade"and key~="AutoTreadmillUpgrade"and key~="AutoHelp"and key~="AutoMutations"and key~="AutoSellAnimals"and not key:match("^Mutation")then FusionModules.Options[key]=automaticMode end
  end
  FusionModules.Options.AutoEggsMin=minimumRatePerSecond
  FusionModules.Options.AutoSellMax=minimumRatePerSecond
@@ -2497,6 +2498,10 @@ local function moveActivity(destination, token, interruptForEgg, nextDestination
   if autoActivity=="TO_FISHING"and FusionModules.FishingMoveValid and not FusionModules.FishingMoveValid()then stopMovement(true);return false,"pêche interrompue"end
   if autoActivity=="TO_FARM"and FusionModules.CollectionReturnPending then stopMovement(true);return false,"COLLECTION_STOPPED"end
   if autoActivity=="TO_UPGRADE"and FusionModules.UpgradeMoveValid and not FusionModules.UpgradeMoveValid()then stopMovement(true);return false,"upgrade interrompue : priorite au vol ou option OFF"end
+  if autoActivity=="SLICK_RICK" and FusionModules.SlickRick.MoveValid and not FusionModules.SlickRick.MoveValid() then
+   stopMovement(true);return false,"Slick Rick interrompu"
+  end
+  if autoActivity=="TO_TREADMILL" and FusionModules.SlickRick.Available() then stopMovement(true);return false,"slick rick"end
   if autoActivity=="TO_TREADMILL" and FusionModules.Helpers.FishingMode() then stopMovement(true);return false,"eclipse"end
   if autoActivity=="TO_TREADMILL" and FusionModules.Skyfall.Available() then stopMovement(true);return false,"skyfall"end
   if autoActivity=="TO_TREADMILL"and not FusionModules.Options.AutoTreadmill then stopMovement(true);return false,"tapis OFF"end
@@ -3589,7 +3594,7 @@ function FusionModules.Butterflies.Idle(token)
  log("ACTION","Collecte des papillons en cours")
  setStatus("Papillons : filet equipe jusqu'au prochain cycle d'oeufs.")
  while FusionModules.Options.AutoPapillon and activityValid(token,character) and automaticMode and not stopAfterFlight
-  and b.Revision==revision and Workspace:GetServerTimeNow()<b.Until and not FusionModules.Skyfall.Available() and not FusionModules.Helpers.FishingMode() do
+  and b.Revision==revision and Workspace:GetServerTimeNow()<b.Until and not FusionModules.Skyfall.Available() and not FusionModules.Helpers.FishingMode() and not FusionModules.SlickRick.Available() do
   local present,net=b.Available(true)
   if not present then break end
   if net.Parent~=character then humanoid:EquipTool(net) end
@@ -3668,6 +3673,163 @@ function FusionModules.Skyfall.SelectRock(rocks,position,skipped,crackedOnly)
  return target
 end
 
+FusionModules.SlickRick={RetryAt=0}
+
+function FusionModules.SlickRick.Available()
+ local market=FusionModules.SlickRick
+ if FusionModules.Reporting.ClientKind~="admin" or not FusionModules.Options.AutoSlickRick
+  or os.clock()<market.RetryAt then return nil end
+ local visit=Workspace:GetAttribute("BlackMarketVisitId")
+ local expires=Workspace:GetAttribute("BlackMarketLeavesAt")
+ if type(visit)=="number" and visit~=market.CompletedVisit
+  and type(expires)=="number" and expires>Workspace:GetServerTimeNow() then return visit end
+end
+
+function FusionModules.SlickRick.SelectOffer(catalog,profile,excluded,budget)
+ local priorities={Egg=1,Mutation=1,Item=1,WeaponSkin=2,BaseSkin=2}
+ local best,bestPriority
+ for _,offer in ipairs(profile.BlackMarket.Offer)do
+  local item=catalog.Get(offer.Id)
+  local priority=item and priorities[item.Kind]
+  if priority and not excluded[offer.Id] and type(offer.Stock)=="number" and offer.Stock>0
+   and type(offer.Price)=="number" and offer.Price>0 and offer.Price<=budget then
+   local owned=(item.Kind=="WeaponSkin" and ((profile.GearInventory or {})[item.GearName] or 0)>0)
+    or (item.Kind=="BaseSkin" and (profile.OwnedBaseSkins or {})[item.Id]==true)
+   if not owned and (not best or priority<bestPriority or (priority==bestPriority and
+    (offer.Price<best.Price or (offer.Price==best.Price and offer.Id<best.Id)))) then
+    best,bestPriority=offer,priority
+   end
+  end
+ end
+ return best
+end
+
+function FusionModules.SlickRick.Run(token,visit)
+ local market=FusionModules.SlickRick
+ local util=require(ReplicatedStorage.Shared.Util.BlackMarket)
+ local catalog=require(ReplicatedStorage.Data.BlackMarket)
+ local remotes=require(ReplicatedStorage.Shared.Remotes).BlackMarket
+ local ui=require(ReplicatedStorage.Controllers.Game.BlackMarketController.Market)
+ local character,_,root=getCharacterParts()
+ if not root then return end
+ local function active()
+  return activityValid(token,character) and automaticMode and not stopAfterFlight
+   and not serverHopPending and not FusionModules.CollectionReturnPending
+   and next(queuedEggs)==nil and market.Available()==visit
+ end
+ local profile=Save.Peek()
+ if not profile then return end
+ if not util.FastEnough(profile.SpeedPower) then market.CompletedVisit=visit;return end
+ if player:GetAttribute("InAlienLagoon")==true then
+  local runtime=FusionModules.AdminRuntime
+  if not runtime or not runtime.Initialized then return end
+  runtime.StopFishing()
+  if not runtime.LeaveFishingLagoon() then return end
+ end
+ if not active() then return end
+ local left,why=leaveTreadmill(token)
+ if not left then error(tostring(why),0) end
+ if not active() then return end
+ local station=util.Station()
+ if not station then return end
+ local camp=Workspace:FindFirstChild("SlickRickCamp")
+ local npc=camp and camp:FindFirstChild("SlickRick")
+ if not npc or not npc.PrimaryPart then return end
+ local destination=npc.PrimaryPart.Position
+ autoActivity="SLICK_RICK"
+ market.MoveValid=active
+ setStatus("Slick Rick · trajet vers le marché noir")
+ local reached=moveActivity(Vector3.new(destination.X,root.Position.Y,destination.Z),token,true)
+ market.MoveValid=nil
+ if not reached or not active() then return end
+ stopMovement(true)
+ local opened,detail=remotes.AskOpen:InvokeServer()
+ if not opened then error(tostring(detail),0) end
+ if not active() then return end
+ market.OpenUI=ui
+ ui.Open()
+ local function readOffer()
+  local snapshot=Save.Peek()
+  local shop=snapshot and snapshot.BlackMarket
+  if shop and shop.VisitId==visit and type(shop.Offer)=="table" and type(snapshot.Money)=="number" then
+   return snapshot
+  end
+ end
+ local deadline=os.clock()+5
+ repeat
+  profile=readOffer()
+  if profile or not active() then break end
+  task.wait(.15)
+ until os.clock()>=deadline
+ if not profile then return end
+
+ local excluded={}
+ local budget=profile.Money
+ while active() do
+  profile=readOffer()
+  if not profile then return end
+  local offer=market.SelectOffer(catalog,profile,excluded,math.min(budget,profile.Money))
+  if not offer then
+   market.CompletedVisit=visit
+   setStatus("Slick Rick · achats terminés")
+   return
+  end
+  local id,stock,price=offer.Id,offer.Stock,offer.Price
+  local item=catalog.Get(id)
+  setStatus("Slick Rick · achat de "..item.DisplayName)
+  market.Purchasing=true
+  local ok,bought,message=pcall(function()return remotes.AskBuy:InvokeServer(id)end)
+  market.Purchasing=false
+  if not ok or type(bought)~="boolean" then
+   market.CompletedVisit=visit
+   error("Résultat d’achat incertain pour "..id,0)
+  end
+  if bought then
+   budget-=price
+   log("ACTION","Slick Rick : achat confirmé de %s",item.DisplayName)
+   if not catalog.IsStackable(item) then
+    excluded[id]=true
+   else
+    local confirmed=false
+    local syncDeadline=os.clock()+5
+    repeat
+     local latest=readOffer()
+     if latest then
+      local current
+      for _,row in ipairs(latest.BlackMarket.Offer)do if row.Id==id then current=row;break end end
+      confirmed=not current or (type(current.Stock)=="number" and current.Stock<stock)
+     end
+     if not confirmed and os.clock()<syncDeadline then task.wait(.15) end
+    until confirmed or os.clock()>=syncDeadline
+    if not confirmed then
+     market.CompletedVisit=visit
+     error("Stock non synchronisé après l’achat de "..id,0)
+    end
+   end
+  else
+   if message==util.Messages.Closed or message==util.Messages.TooFar or message==util.Messages.Busy then return end
+   excluded[id]=true
+   log("ACTION","Slick Rick : %s – %s",item.DisplayName,tostring(message))
+  end
+  task.wait(.2)
+ end
+end
+
+function FusionModules.SlickRick.Idle(token)
+ local market=FusionModules.SlickRick
+ local visit=market.Available()
+ if not visit then return end
+ local ok=FusionModules.Protect("SLICK_RICK",market.Run,token,visit)
+ market.MoveValid=nil
+ market.Purchasing=false
+ if market.OpenUI then
+  pcall(market.OpenUI.Close)
+  market.OpenUI=nil
+ end
+ market.RetryAt=os.clock()+(ok and 3 or 10)
+ if generation==token then stopMovement(true);autoActivity="IDLE" end
+end
+
 function FusionModules.Skyfall.Run(token)
  local sky=FusionModules.Skyfall
  local character,humanoid,root=getCharacterParts()
@@ -3675,7 +3837,7 @@ function FusionModules.Skyfall.Run(token)
  local function active()
   return activityValid(token,character) and automaticMode and not stopAfterFlight
    and not serverHopPending and not FusionModules.CollectionReturnPending
-   and next(queuedEggs)==nil and sky.Rocks()~=nil
+   and next(queuedEggs)==nil and sky.Rocks()~=nil and not FusionModules.SlickRick.Available()
  end
  if player:GetAttribute("InAlienLagoon")==true then
   local runtime=FusionModules.AdminRuntime
@@ -3687,12 +3849,6 @@ function FusionModules.Skyfall.Run(token)
  local left,detail=leaveTreadmill(token)
  if not left then error(tostring(detail),0) end
  if not active() then return end
- local bat=FusionModules.BatCombat.FindBest(character,player:FindFirstChildOfClass("Backpack"))
- if not bat then error("Aucune batte disponible",0) end
- if bat.Parent~=character then
-  humanoid:EquipTool(bat)
-  sky.EquippedBat=bat
- end
  autoActivity="SKYFALL"
  local skipped={}
  while active() do
@@ -3700,6 +3856,15 @@ function FusionModules.Skyfall.Run(token)
   if not rocks then break end
   local target=sky.SelectRock(rocks,root.Position,skipped)
   if target then
+   local bat=FusionModules.BatCombat.FindBest(character,player:FindFirstChildOfClass("Backpack"))
+   if not bat then error("Aucune batte disponible",0) end
+   if bat.Parent~=character then
+    humanoid:EquipTool(bat)
+    local previous=sky.EquippedBat
+    local backpack=player:FindFirstChildOfClass("Backpack")
+    if previous and previous~=bat and backpack and previous.Parent==character then previous.Parent=backpack end
+    sky.EquippedBat=bat
+   end
    setStatus("Skyfall · trajet vers "..target.Name)
    local function targetActive()
     if not active() or target.Parent~=rocks or not sky.Tags:HasTag(target,"BatAutoSwing") then return false end
@@ -3834,6 +3999,7 @@ function FusionModules.Helpers.FishingIdle(token)
   local selected,rate=selectBest()
   if selected then FusionModules.Helpers.RequestFishingEgg(selected,rate)
   elseif FusionModules.RemoteHop.LocalReturnTarget then FusionModules.Helpers.ReturnForFishingEgg()
+  elseif FusionModules.SlickRick.Available() then break
   end
   task.wait(.1)
  end
@@ -3865,7 +4031,7 @@ local function idleOnTreadmill(token)
 		local destination = bottom.Position + Vector3.new(0, humanoid.HipHeight + 2, 0)
 		local ok, reason = measureAction("ENTREE_TAPIS", moveActivity, destination, token, true)
 		if not ok then
-			if reason == "nouvel oeuf"or reason=="tapis OFF"or reason=="skyfall"or reason=="eclipse"then return true end
+			if reason == "nouvel oeuf"or reason=="tapis OFF"or reason=="skyfall"or reason=="eclipse"or reason=="slick rick"then return true end
 			return false, reason
 		end
 		-- The normal controller detects entry with its downward raycast.
@@ -3885,7 +4051,7 @@ local function idleOnTreadmill(token)
 	if destroyed or not autoEnabled or generation ~= token then return true end
 	setStatus("TREADMILL : entrainement, attente d'un oeuf...")
 	while autoEnabled and generation == token and automaticMode and not queuePaused
-		and not FusionModules.Helpers.FishingMode()and FusionModules.Options.AutoTreadmill and next(queuedEggs) == nil and not activityRecheckPending and not FusionModules.Butterflies.Available() and not FusionModules.Skyfall.Available() and not destroyed do
+		and not FusionModules.Helpers.FishingMode()and FusionModules.Options.AutoTreadmill and next(queuedEggs) == nil and not activityRecheckPending and not FusionModules.Butterflies.Available() and not FusionModules.Skyfall.Available() and not FusionModules.SlickRick.Available() and not destroyed do
 		serviceWallMaintenance(token)
   if FusionModules.AdminRuntime and FusionModules.AdminRuntime.ProgressTravelling and FusionModules.AdminRuntime.ProgressTravelling()then task.wait(CONFIG.ScanInterval);continue end
 		if not treadmillAssigned and autoActivity ~= "TREADMILL" then return true end
@@ -4086,7 +4252,9 @@ local function worker(token)
 			end
 		else
 			directNext = false
-			if automaticMode and FusionModules.Helpers.FishingMode() then
+			if automaticMode and FusionModules.SlickRick.Available() then
+                FusionModules.SlickRick.Idle(token)
+            elseif automaticMode and FusionModules.Helpers.FishingMode() then
                 local ok,reason=FusionModules.Helpers.FishingIdle(token)
                 if not ok then stopAutomation("Cosmic Eclipse : "..tostring(reason));return end
             elseif automaticMode and FusionModules.Skyfall.Available() then
@@ -4564,6 +4732,7 @@ function FusionModules.RemoteHop.Receive(message)
  hop.Try()
 end
 function FusionModules.RemoteHop.Try()
+ if FusionModules.SlickRick and FusionModules.SlickRick.Purchasing then return false end
  if FusionModules.BetweenFlights then return false end
  local hop=FusionModules.RemoteHop
  if hop.Processing or serverHopPending or not hop.Pending or os.clock()<hop.RetryAt then return false end
