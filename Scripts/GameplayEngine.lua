@@ -95,6 +95,7 @@ function FusionModules.Helpers.InIncomeRange(key,rate)
   and rate>=FusionModules.Options[key.."Min"]and rate<=FusionModules.Options[key.."Max"]
 end
 
+FusionModules.Options.AutoSkyfall=false
 FusionModules.Options.AutoPlotUpgrade=false
 FusionModules.Options.IdleMode="Treadmill"
 FusionModules.Options.AutoTreadmillUpgrade=false
@@ -377,7 +378,7 @@ local function loadSettings()
 		minimumRatePerSecond = minimum * 1e9
 	end
  for key,value in pairs(FusionModules.Options)do
-  if type(value)=="boolean"and key~="AutoPlotUpgrade"and key~="AutoTreadmillUpgrade"and key~="AutoHelp"and key~="AutoMutations"and key~="AutoSellAnimals"and not key:match("^Mutation")then FusionModules.Options[key]=automaticMode end
+  if type(value)=="boolean"and key~="AutoSkyfall"and key~="AutoPlotUpgrade"and key~="AutoTreadmillUpgrade"and key~="AutoHelp"and key~="AutoMutations"and key~="AutoSellAnimals"and not key:match("^Mutation")then FusionModules.Options[key]=automaticMode end
  end
  FusionModules.Options.AutoEggsMin=minimumRatePerSecond
  FusionModules.Options.AutoSellMax=minimumRatePerSecond
@@ -2468,9 +2469,13 @@ local function moveActivity(destination, token, interruptForEgg, nextDestination
 	local previous = root.Position
 	local nextCommand = 0
 	while true do
+  if autoActivity=="SKYFALL" and FusionModules.Skyfall.MoveValid and not FusionModules.Skyfall.MoveValid() then
+   stopMovement(true);return false,"Skyfall interrompu"
+  end
   if autoActivity=="TO_FISHING"and FusionModules.FishingMoveValid and not FusionModules.FishingMoveValid()then stopMovement(true);return false,"pêche interrompue"end
   if autoActivity=="TO_FARM"and FusionModules.CollectionReturnPending then stopMovement(true);return false,"COLLECTION_STOPPED"end
   if autoActivity=="TO_UPGRADE"and FusionModules.UpgradeMoveValid and not FusionModules.UpgradeMoveValid()then stopMovement(true);return false,"upgrade interrompue : priorite au vol ou option OFF"end
+  if autoActivity=="TO_TREADMILL" and FusionModules.Skyfall.Available() then stopMovement(true);return false,"skyfall"end
   if autoActivity=="TO_TREADMILL"and not FusionModules.Options.AutoTreadmill then stopMovement(true);return false,"tapis OFF"end
 		if not activityValid(token, character) or humanoid.Health <= 0 then
 			stopMovement()
@@ -3561,7 +3566,7 @@ function FusionModules.Butterflies.Idle(token)
  log("ACTION","Collecte des papillons en cours")
  setStatus("Papillons : filet equipe jusqu'au prochain cycle d'oeufs.")
  while FusionModules.Options.AutoPapillon and activityValid(token,character) and automaticMode and not stopAfterFlight
-  and b.Revision==revision and Workspace:GetServerTimeNow()<b.Until do
+  and b.Revision==revision and Workspace:GetServerTimeNow()<b.Until and not FusionModules.Skyfall.Available() do
   local present,net=b.Available(true)
   if not present then break end
   if net.Parent~=character then humanoid:EquipTool(net) end
@@ -3606,6 +3611,104 @@ do
   autoActivity="IDLE"
   return false
  end
+end
+
+FusionModules.Skyfall={RetryAt=0, Tags=game:GetService("CollectionService")}
+
+function FusionModules.Skyfall.Rocks()
+ if FusionModules.Reporting.ClientKind~="admin" or not FusionModules.Options.AutoSkyfall then return nil end
+ local folder=Workspace:FindFirstChild("StormheartRockfallLocal")
+ local rocks=folder and folder:FindFirstChild("Rocks")
+ if rocks and #rocks:GetChildren()>0 then return rocks end
+end
+
+function FusionModules.Skyfall.Available()
+ return os.clock()>=FusionModules.Skyfall.RetryAt and FusionModules.Skyfall.Rocks()
+end
+
+function FusionModules.Skyfall.Run(token)
+ local sky=FusionModules.Skyfall
+ local character,humanoid,root=getCharacterParts()
+ if not root or not humanoid then return end
+ local function active()
+  return activityValid(token,character) and automaticMode and not stopAfterFlight
+   and not serverHopPending and not FusionModules.CollectionReturnPending
+   and next(queuedEggs)==nil and sky.Rocks()~=nil
+ end
+ if player:GetAttribute("InAlienLagoon")==true then
+  local runtime=FusionModules.AdminRuntime
+  if not runtime then return end
+  runtime.StopFishing()
+  if not runtime.LeaveFishingLagoon() then return end
+ end
+ if not active() then return end
+ local left,detail=leaveTreadmill(token)
+ if not left then error(tostring(detail),0) end
+ if not active() then return end
+ local bat=FusionModules.BatCombat.FindBest(character,player:FindFirstChildOfClass("Backpack"))
+ if not bat then error("Aucune batte disponible",0) end
+ if bat.Parent~=character then
+  humanoid:EquipTool(bat)
+  sky.EquippedBat=bat
+ end
+ autoActivity="SKYFALL"
+ local skipped={}
+ while active() do
+  local rocks=sky.Rocks()
+  if not rocks then break end
+  local target,nearest
+  for _,rock in ipairs(rocks:GetChildren())do
+   local health=rock:GetAttribute("Health")
+   if rock:IsA("BasePart") and type(health)=="number" and health>0
+    and sky.Tags:HasTag(rock,"BatAutoSwing") and not skipped[rock] then
+    local distance=distanceXZ(root.Position,rock.Position)
+    if not nearest or distance<nearest then target,nearest=rock,distance end
+   end
+  end
+  if target then
+   setStatus("Skyfall · trajet vers "..target.Name)
+   local function targetActive()
+    return active() and target.Parent==rocks and sky.Tags:HasTag(target,"BatAutoSwing")
+   end
+   sky.MoveValid=targetActive
+   local point=target.Position
+   local reached=moveActivity(Vector3.new(point.X,root.Position.Y,point.Z),token,true)
+   sky.MoveValid=nil
+   if reached then
+    setStatus("Skyfall · frappe automatique")
+    local health=target:GetAttribute("Health")
+    local deadline=os.clock()+25
+    while targetActive() and os.clock()<deadline do
+     local remaining=target:GetAttribute("Health")
+     if remaining~=health then health=remaining;deadline=os.clock()+25 end
+     if bat.Parent~=character then
+      if not bat.Parent then break end
+      humanoid:EquipTool(bat)
+      sky.EquippedBat=bat
+     end
+     if distanceXZ(root.Position,target.Position)>6 then break end
+     task.wait(CONFIG.ScanInterval)
+    end
+   end
+   if targetActive() then skipped[target]=true end
+  else
+   setStatus("Skyfall · attente d’un rocher disponible")
+   task.wait(.5)
+   table.clear(skipped)
+  end
+ end
+end
+
+function FusionModules.Skyfall.Idle(token)
+ local sky=FusionModules.Skyfall
+ local ok=FusionModules.Protect("SKYFALL",sky.Run,token)
+ sky.MoveValid=nil
+ local bat=sky.EquippedBat
+ sky.EquippedBat=nil
+ local backpack=player:FindFirstChildOfClass("Backpack")
+ if bat and backpack and bat.Parent==player.Character then bat.Parent=backpack end
+ if generation==token then stopMovement(true);autoActivity="IDLE" end
+ if not ok then sky.RetryAt=os.clock()+10 else sky.RetryAt=os.clock()+1 end
 end
 
 function FusionModules.Helpers.FishingMode()
@@ -3709,6 +3812,7 @@ function FusionModules.Helpers.FishingIdle(token)
   local selected,rate=selectBest()
   if selected then FusionModules.Helpers.RequestFishingEgg(selected,rate)
   elseif FusionModules.RemoteHop.LocalReturnTarget then FusionModules.Helpers.ReturnForFishingEgg()
+  elseif FusionModules.Skyfall.Available()then break
   elseif FusionModules.Butterflies.Available()then FusionModules.Butterflies.FromFishing(token)end
   task.wait(.1)
  end
@@ -3741,7 +3845,7 @@ local function idleOnTreadmill(token)
 		local destination = bottom.Position + Vector3.new(0, humanoid.HipHeight + 2, 0)
 		local ok, reason = measureAction("ENTREE_TAPIS", moveActivity, destination, token, true)
 		if not ok then
-			if reason == "nouvel oeuf"or reason=="tapis OFF"then return true end
+			if reason == "nouvel oeuf"or reason=="tapis OFF"or reason=="skyfall"then return true end
 			return false, reason
 		end
 		-- The normal controller detects entry with its downward raycast.
@@ -3761,7 +3865,7 @@ local function idleOnTreadmill(token)
 	if destroyed or not autoEnabled or generation ~= token then return true end
 	setStatus("TREADMILL : entrainement, attente d'un oeuf...")
 	while autoEnabled and generation == token and automaticMode and not queuePaused
-		and not FusionModules.Helpers.FishingMode()and FusionModules.Options.AutoTreadmill and next(queuedEggs) == nil and not activityRecheckPending and not FusionModules.Butterflies.Available() and not destroyed do
+		and not FusionModules.Helpers.FishingMode()and FusionModules.Options.AutoTreadmill and next(queuedEggs) == nil and not activityRecheckPending and not FusionModules.Butterflies.Available() and not FusionModules.Skyfall.Available() and not destroyed do
 		serviceWallMaintenance(token)
   if FusionModules.AdminRuntime and FusionModules.AdminRuntime.ProgressTravelling and FusionModules.AdminRuntime.ProgressTravelling()then task.wait(CONFIG.ScanInterval);continue end
 		if not treadmillAssigned and autoActivity ~= "TREADMILL" then return true end
@@ -3944,7 +4048,9 @@ local function worker(token)
 			end
 		else
 			directNext = false
-			if automaticMode and not FusionModules.Helpers.FishingMode()and FusionModules.Butterflies.Available() then
+			if automaticMode and FusionModules.Skyfall.Available() then
+                FusionModules.Skyfall.Idle(token)
+            elseif automaticMode and not FusionModules.Helpers.FishingMode()and FusionModules.Butterflies.Available() then
 				FusionModules.Butterflies.Idle(token)
 			elseif automaticMode then
 				serverSearchState = "OFF"
