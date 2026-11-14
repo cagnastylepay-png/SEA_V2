@@ -3649,6 +3649,26 @@ function FusionModules.Skyfall.Available()
  return os.clock()>=FusionModules.Skyfall.RetryAt and FusionModules.Skyfall.Rocks()
 end
 
+function FusionModules.Skyfall.SelectRock(rocks,position,skipped,infusedOnly)
+ local tags=FusionModules.Skyfall.Tags
+ local target,nearest,bestInfused
+ for _,rock in ipairs(rocks:GetChildren())do
+  local health=rock:GetAttribute("Health")
+  if rock:IsA("BasePart") and type(health)=="number" and health>0
+   and tags:HasTag(rock,"BatAutoSwing") and not skipped[rock] then
+   local effect=rock:FindFirstChild("InfusedFx")
+   local infused=effect~=nil and effect:IsA("Attachment")
+   if not infusedOnly or infused then
+    local distance=distanceXZ(position,rock.Position)
+    if not target or (infused and not bestInfused) or (infused==bestInfused and distance<nearest) then
+     target,nearest,bestInfused=rock,distance,infused
+    end
+   end
+  end
+ end
+ return target,bestInfused
+end
+
 function FusionModules.Skyfall.Run(token)
  local sky=FusionModules.Skyfall
  local character,humanoid,root=getCharacterParts()
@@ -3679,19 +3699,14 @@ function FusionModules.Skyfall.Run(token)
  while active() do
   local rocks=sky.Rocks()
   if not rocks then break end
-  local target,nearest
-  for _,rock in ipairs(rocks:GetChildren())do
-   local health=rock:GetAttribute("Health")
-   if rock:IsA("BasePart") and type(health)=="number" and health>0
-    and sky.Tags:HasTag(rock,"BatAutoSwing") and not skipped[rock] then
-    local distance=distanceXZ(root.Position,rock.Position)
-    if not nearest or distance<nearest then target,nearest=rock,distance end
-   end
-  end
+  local target,infused=sky.SelectRock(rocks,root.Position,skipped)
   if target then
-   setStatus("Skyfall · trajet vers "..target.Name)
+   setStatus(infused and "Skyfall · trajet vers un rocher infusé" or "Skyfall · trajet vers "..target.Name)
    local function targetActive()
-    return active() and target.Parent==rocks and sky.Tags:HasTag(target,"BatAutoSwing")
+    if not active() or target.Parent~=rocks or not sky.Tags:HasTag(target,"BatAutoSwing") then return false end
+    local effect=target:FindFirstChild("InfusedFx")
+    return infused or (effect and effect:IsA("Attachment"))
+     or not sky.SelectRock(rocks,root.Position,skipped,true)
    end
    sky.MoveValid=targetActive
    local point=target.Position
