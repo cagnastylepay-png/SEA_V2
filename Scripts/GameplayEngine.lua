@@ -3649,24 +3649,23 @@ function FusionModules.Skyfall.Available()
  return os.clock()>=FusionModules.Skyfall.RetryAt and FusionModules.Skyfall.Rocks()
 end
 
-function FusionModules.Skyfall.SelectRock(rocks,position,skipped,infusedOnly)
+function FusionModules.Skyfall.SelectRock(rocks,position,skipped,crackedOnly)
  local tags=FusionModules.Skyfall.Tags
- local target,nearest,bestInfused
+ local target,nearest,bestCracked
  for _,rock in ipairs(rocks:GetChildren())do
   local health=rock:GetAttribute("Health")
   if rock:IsA("BasePart") and type(health)=="number" and health>0
    and tags:HasTag(rock,"BatAutoSwing") and not skipped[rock] then
-   local effect=rock:FindFirstChild("InfusedFx")
-   local infused=effect~=nil and effect:IsA("Attachment")
-   if not infusedOnly or infused then
+   local cracked=rock.Name=="Cracked"
+   if not crackedOnly or cracked then
     local distance=distanceXZ(position,rock.Position)
-    if not target or (infused and not bestInfused) or (infused==bestInfused and distance<nearest) then
-     target,nearest,bestInfused=rock,distance,infused
+    if not target or (cracked and not bestCracked) or (cracked==bestCracked and distance<nearest) then
+     target,nearest,bestCracked=rock,distance,cracked
     end
    end
   end
  end
- return target,bestInfused
+ return target
 end
 
 function FusionModules.Skyfall.Run(token)
@@ -3699,13 +3698,12 @@ function FusionModules.Skyfall.Run(token)
  while active() do
   local rocks=sky.Rocks()
   if not rocks then break end
-  local target,infused=sky.SelectRock(rocks,root.Position,skipped)
+  local target=sky.SelectRock(rocks,root.Position,skipped)
   if target then
-   setStatus(infused and "Skyfall · trajet vers un rocher infusé" or "Skyfall · trajet vers "..target.Name)
+   setStatus("Skyfall · trajet vers "..target.Name)
    local function targetActive()
     if not active() or target.Parent~=rocks or not sky.Tags:HasTag(target,"BatAutoSwing") then return false end
-    local effect=target:FindFirstChild("InfusedFx")
-    return infused or (effect and effect:IsA("Attachment"))
+    return target.Name=="Cracked"
      or not sky.SelectRock(rocks,root.Position,skipped,true)
    end
    sky.MoveValid=targetActive
