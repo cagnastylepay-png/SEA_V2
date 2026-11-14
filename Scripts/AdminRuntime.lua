@@ -46,7 +46,7 @@ return function(ctx)
   local saved=profile().Inventory and profile().Inventory[uid]
   return saved and A.Items.Decode(saved),saved
  end
- local mutationIds={"Boss","Scrambled","Enchanted","Nitro","Spectral","Musical","Alien","DarkMatter"}
+ local mutationIds={"Boss","Scrambled","Enchanted","Nitro","Spectral","Musical","Alien","DarkMatter","Blacklisted","Copper","Thunderous","GreatBloom"}
  local waitUntil
  local function hasMutation(record,id)return record.BaseMutation==id or table.find(record.Mutations or{},id)~=nil end
  local function mutationTools()
@@ -708,7 +708,7 @@ return function(ctx)
    A.Speed=module("Client.SpeedPowerProjection");A.Remotes=module("Shared.Remotes");A.Renderer=module("Shared.Eggs.PlacedEggRenderer")
    A.Kernel=module("Shared.Util.FuseKernel");A.Signals=module("Client.FuseMachineSignals");A.FuseTypes=module("Shared.Types.FuseMachine")
    A.MutationCatalog=module("Shared.Modules.Mutations.Catalog");A.MutationFlags={}
-   for id,spec in pairs({Boss={"Shared.Flags.BossMasteryFlags","MutationConsumableSuccessPercent"},Scrambled={"Shared.Flags.ScrambleMutationFlags","SuccessPercent"},Nitro={"Shared.Flags.RaceRallyFlags","NitroSuccessPercent"},Spectral={"Shared.Flags.TrainEventFlags","SpectralSuccessPercent"},Musical={"Shared.Flags.BossMasteryFlags","MusicalMutationSuccessPercent"},Alien={"Shared.Flags.UFOSightingsFlags","AlienMutationSuccessPercent"},DarkMatter={"Shared.Flags.AlienLagoonFlags","DarkMatterMutationSuccessPercent"}})do
+   for id,spec in pairs({Boss={"Shared.Flags.BossMasteryFlags","MutationConsumableSuccessPercent"},Scrambled={"Shared.Flags.ScrambleMutationFlags","SuccessPercent"},Nitro={"Shared.Flags.RaceRallyFlags","NitroSuccessPercent"},Spectral={"Shared.Flags.TrainEventFlags","SpectralSuccessPercent"},Musical={"Shared.Flags.BossMasteryFlags","MusicalMutationSuccessPercent"},Alien={"Shared.Flags.UFOSightingsFlags","AlienMutationSuccessPercent"},DarkMatter={"Shared.Flags.AlienLagoonFlags","DarkMatterMutationSuccessPercent"},Blacklisted={"Shared.Flags.ItemFlags","BlacklistedMutationSuccessPercent"},Copper={"Shared.Flags.ItemFlags","CopperMutationSuccessPercent"},Thunderous={"Shared.Flags.ItemFlags","ThunderousMutationSuccessPercent"},GreatBloom={"Shared.Flags.ItemFlags","SpiritBloomMutationSuccessPercent"}})do
     local flags=safe(module,spec[1]);A.MutationFlags[id]=flags and flags[spec[2]]
    end
    A.Initialized=true
