@@ -98,6 +98,7 @@ end
 FusionModules.Options.AutoSkyfall=false
 FusionModules.Options.AutoPlotUpgrade=false
 FusionModules.Options.IdleMode="Treadmill"
+FusionModules.Options.AutoCosmicEclipse=false
 FusionModules.Options.AutoTreadmillUpgrade=false
 FusionModules.Options.AutoHelp=false
 FusionModules.Options.AutoHelpMin=2e9
@@ -202,7 +203,7 @@ local refreshFlightLog
 local stopAfterFlight = false
 local queuedEggs = {}
 function FusionModules.Helpers.ShouldRun()
- if FusionModules.Options.IdleMode=="Fishing"then return true end
+ if FusionModules.Reporting.ClientKind=="admin" and player:GetAttribute("InAlienLagoon")==true then return true end
  for key,value in pairs(FusionModules.Options)do if key~="QueueNearest"and type(value)=="boolean"and value then return true end end
  return next(queuedEggs)~=nil
 end
@@ -378,7 +379,7 @@ local function loadSettings()
 		minimumRatePerSecond = minimum * 1e9
 	end
  for key,value in pairs(FusionModules.Options)do
-  if type(value)=="boolean"and key~="AutoSkyfall"and key~="AutoPlotUpgrade"and key~="AutoTreadmillUpgrade"and key~="AutoHelp"and key~="AutoMutations"and key~="AutoSellAnimals"and not key:match("^Mutation")then FusionModules.Options[key]=automaticMode end
+  if type(value)=="boolean"and key~="AutoCosmicEclipse"and key~="AutoSkyfall"and key~="AutoPlotUpgrade"and key~="AutoTreadmillUpgrade"and key~="AutoHelp"and key~="AutoMutations"and key~="AutoSellAnimals"and not key:match("^Mutation")then FusionModules.Options[key]=automaticMode end
  end
  FusionModules.Options.AutoEggsMin=minimumRatePerSecond
  FusionModules.Options.AutoSellMax=minimumRatePerSecond
@@ -2475,6 +2476,7 @@ local function moveActivity(destination, token, interruptForEgg, nextDestination
   if autoActivity=="TO_FISHING"and FusionModules.FishingMoveValid and not FusionModules.FishingMoveValid()then stopMovement(true);return false,"pêche interrompue"end
   if autoActivity=="TO_FARM"and FusionModules.CollectionReturnPending then stopMovement(true);return false,"COLLECTION_STOPPED"end
   if autoActivity=="TO_UPGRADE"and FusionModules.UpgradeMoveValid and not FusionModules.UpgradeMoveValid()then stopMovement(true);return false,"upgrade interrompue : priorite au vol ou option OFF"end
+  if autoActivity=="TO_TREADMILL" and FusionModules.Helpers.FishingMode() then stopMovement(true);return false,"eclipse"end
   if autoActivity=="TO_TREADMILL" and FusionModules.Skyfall.Available() then stopMovement(true);return false,"skyfall"end
   if autoActivity=="TO_TREADMILL"and not FusionModules.Options.AutoTreadmill then stopMovement(true);return false,"tapis OFF"end
 		if not activityValid(token, character) or humanoid.Health <= 0 then
@@ -3566,7 +3568,7 @@ function FusionModules.Butterflies.Idle(token)
  log("ACTION","Collecte des papillons en cours")
  setStatus("Papillons : filet equipe jusqu'au prochain cycle d'oeufs.")
  while FusionModules.Options.AutoPapillon and activityValid(token,character) and automaticMode and not stopAfterFlight
-  and b.Revision==revision and Workspace:GetServerTimeNow()<b.Until and not FusionModules.Skyfall.Available() do
+  and b.Revision==revision and Workspace:GetServerTimeNow()<b.Until and not FusionModules.Skyfall.Available() and not FusionModules.Helpers.FishingMode() do
   local present,net=b.Available(true)
   if not present then break end
   if net.Parent~=character then humanoid:EquipTool(net) end
@@ -3712,7 +3714,12 @@ function FusionModules.Skyfall.Idle(token)
 end
 
 function FusionModules.Helpers.FishingMode()
- return FusionModules.Reporting.ClientKind=="admin"and FusionModules.Options.IdleMode=="Fishing"
+ if FusionModules.Reporting.ClientKind~="admin" or not FusionModules.Options.AutoCosmicEclipse then return false end
+ local startsAt=Workspace:GetAttribute("CosmicEclipseStartsAt")
+ local endsAt=Workspace:GetAttribute("CosmicEclipseEndsAt")
+ if type(startsAt)~="number" or type(endsAt)~="number" then return false end
+ local now=Workspace:GetServerTimeNow()
+ return startsAt<=now and now<endsAt
 end
 function FusionModules.Helpers.FishingActive()
  local runtime=FusionModules.AdminRuntime
@@ -3778,32 +3785,13 @@ function FusionModules.Helpers.RequestFishingEgg(selected,rate)
  }})
  FusionModules.Helpers.ReturnForFishingEgg()
 end
-function FusionModules.Butterflies.FromFishing(token)
- if not FusionModules.Butterflies.Available()then return false end
- local runtime=FusionModules.AdminRuntime
- if not runtime then return false end
- runtime.StopFishing()
- if player:GetAttribute("InAlienLagoon")==true then
-  setStatus("Papillons : retour en bateau depuis le lagon")
-  local ok,result=pcall(runtime.LeaveFishingLagoon)
-  if not ok or not result then
-   if serverHopPending or not automaticMode then return true end
-   error("Retour pour les papillons : "..tostring(result))
-  end
- end
- if not automaticMode or not autoEnabled or generation~=token or serverHopPending then return true end
- syncQueue()
- if selectBest()or FusionModules.RemoteHop.Pending or FusionModules.RemoteHop.LocalReturnTarget then return true end
- if FusionModules.Butterflies.Available()then FusionModules.Butterflies.Idle(token)end
- return true
-end
 function FusionModules.Helpers.FishingIdle(token)
  local runtime=FusionModules.AdminRuntime
  if not runtime or not runtime.Initialized then task.wait(.5);return true end
  local exited,reason=leaveTreadmill(token)
  if not exited then return false,reason end
  stopMovement(true)
- if FusionModules.Butterflies.FromFishing(token)then return true end
+ if not FusionModules.Helpers.FishingMode()then return true end
  if os.clock()<(runtime.FishingRetryAt or 0)then task.wait(.5);return true end
  runtime.SetFishing(true,true)
  local fishingRun=runtime.FishingRun
@@ -3812,8 +3800,7 @@ function FusionModules.Helpers.FishingIdle(token)
   local selected,rate=selectBest()
   if selected then FusionModules.Helpers.RequestFishingEgg(selected,rate)
   elseif FusionModules.RemoteHop.LocalReturnTarget then FusionModules.Helpers.ReturnForFishingEgg()
-  elseif FusionModules.Skyfall.Available()then break
-  elseif FusionModules.Butterflies.Available()then FusionModules.Butterflies.FromFishing(token)end
+  end
   task.wait(.1)
  end
  if runtime.FishingRun==fishingRun then runtime.StopFishing()end
@@ -3821,7 +3808,6 @@ function FusionModules.Helpers.FishingIdle(token)
 end
 
 local function idleOnTreadmill(token)
- if FusionModules.Helpers.FishingMode()then return FusionModules.Helpers.FishingIdle(token)end
  if player:GetAttribute("InAlienLagoon")==true and FusionModules.Reporting.ClientKind=="admin"then
   local runtime=FusionModules.AdminRuntime
   if not runtime or not runtime.Initialized then task.wait(.5);return true end
@@ -3845,7 +3831,7 @@ local function idleOnTreadmill(token)
 		local destination = bottom.Position + Vector3.new(0, humanoid.HipHeight + 2, 0)
 		local ok, reason = measureAction("ENTREE_TAPIS", moveActivity, destination, token, true)
 		if not ok then
-			if reason == "nouvel oeuf"or reason=="tapis OFF"or reason=="skyfall"then return true end
+			if reason == "nouvel oeuf"or reason=="tapis OFF"or reason=="skyfall"or reason=="eclipse"then return true end
 			return false, reason
 		end
 		-- The normal controller detects entry with its downward raycast.
@@ -3929,6 +3915,24 @@ local function worker(token)
 	local directNext = false
 	while autoEnabled and generation == token and not destroyed do
         syncQueue()
+  if FusionModules.Reporting.ClientKind=="admin" and player:GetAttribute("InAlienLagoon")==true
+   and not FusionModules.Helpers.FishingMode() then
+   local runtime=FusionModules.AdminRuntime
+   if runtime and runtime.Initialized then
+    runtime.StopFishing()
+    setStatus("Cosmic Eclipse · retour du lagon")
+    local ok,left=pcall(runtime.LeaveFishingLagoon)
+    if not ok or not left then
+     log("ERROR","Retour Cosmic Eclipse : %s",tostring(left))
+     task.wait(3)
+     continue
+    end
+    autoActivity="IDLE"
+   else
+    task.wait(.5)
+    continue
+   end
+  end
   if FusionModules.Helpers.ReturnAfterCollectionStop(token)then task.wait();continue end
 		if FusionModules.Arrival.Waiting()then
 			autoActivity="ARRIVAL_WAIT"
@@ -4048,7 +4052,10 @@ local function worker(token)
 			end
 		else
 			directNext = false
-			if automaticMode and FusionModules.Skyfall.Available() then
+			if automaticMode and FusionModules.Helpers.FishingMode() then
+                local ok,reason=FusionModules.Helpers.FishingIdle(token)
+                if not ok then stopAutomation("Cosmic Eclipse : "..tostring(reason));return end
+            elseif automaticMode and FusionModules.Skyfall.Available() then
                 FusionModules.Skyfall.Idle(token)
             elseif automaticMode and not FusionModules.Helpers.FishingMode()and FusionModules.Butterflies.Available() then
 				FusionModules.Butterflies.Idle(token)
