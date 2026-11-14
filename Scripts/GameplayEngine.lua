@@ -1099,6 +1099,27 @@ do
    while not destroyed and report.Enabled do
     local ok,why=pcall(function()
      report.SyncObserver()
+     if report.ClientKind=="admin" and report.Ready and report.LogIdentityReady and report.SettingsAllowed then
+      local now=Workspace:GetServerTimeNow()
+      local events={}
+      local function add(name,expiry,id)
+       if type(expiry)=="number" and expiry>now then events[name]={["until"]=expiry,id=id} end
+      end
+      add("butterflies",FusionModules.Butterflies and FusionModules.Butterflies.Until)
+      add("skyfall",Workspace:GetAttribute("StormheartRockfallEndsAt"))
+      local start=Workspace:GetAttribute("CosmicEclipseStartsAt")
+      if type(start)=="number" and start<=now then
+       add("cosmic",Workspace:GetAttribute("CosmicEclipseEndsAt"),Workspace:GetAttribute("CosmicEclipseId"))
+      end
+      add("slickRick",Workspace:GetAttribute("BlackMarketLeavesAt"),Workspace:GetAttribute("BlackMarketVisitId"))
+      local payload=HttpService:JSONEncode({version=1,type="events.snapshot",events=events})
+      if report.EventsSerial~=report.Serial or report.EventsPayload~=payload then
+       if report.Observer.Send({version=1,type="events.snapshot",events=events}) then
+        report.EventsSerial=report.Serial
+        report.EventsPayload=payload
+       end
+      end
+     end
      local state=tostring(report.AutomationActive())..":"..report.AutomationReason()..":"..tostring(FusionModules.Helpers.FishingActive())
      if state~=report.LastAutomationState then report.LastAutomationState=state;report.MarkSettingsDirty()end
     end)
