@@ -300,6 +300,19 @@ function executorTools.ActivateNativePrompt(prompt)
  task.wait(math.max(prompt.HoldDuration,.05))
  return pcall(function()prompt:InputHoldEnd()end)
 end
+function executorTools.WithPromptReach(prompt,reach,activate)
+ local previousReach=prompt.MaxActivationDistance
+ local previousLineOfSight=prompt.RequiresLineOfSight
+ local ok,activated,reason=pcall(function()
+  prompt.RequiresLineOfSight=false
+  prompt.MaxActivationDistance=math.max(previousReach,reach)
+  return activate(prompt)
+ end)
+ prompt.MaxActivationDistance=previousReach
+ prompt.RequiresLineOfSight=previousLineOfSight
+ if not ok then return false,activated end
+ return activated,reason
+end
 shared.__AutoSAEExecutorTools = executorTools
 
 executorTools.RemoteLogQueue={}
@@ -4270,10 +4283,11 @@ do
     return
    end
    local function sameCharacter()return activityValid(token,character)end
-   local activated=executorTools.ActivateNativePrompt(prompt)
+   local promptReach=math.max(reach,prompt.MaxActivationDistance+4)
+   local activated=executorTools.WithPromptReach(prompt,promptReach,executorTools.FirePrompt)
    local entered=activated and waitFor(rush.Inside,5,sameCharacter)
    if not entered and inReach() and not rush.Inside() then
-    executorTools.FirePrompt(prompt)
+    executorTools.WithPromptReach(prompt,promptReach,executorTools.ActivateNativePrompt)
     entered=waitFor(rush.Inside,10,sameCharacter)
    end
    if not entered and not rush.Inside() then
@@ -4321,20 +4335,14 @@ do
    end
    if missingGlass()~=needed then continue end
    setStatus("Storm Rush · insertion du Stormglass")
-   local previousReach=prompt.MaxActivationDistance
-   local previousLineOfSight=prompt.RequiresLineOfSight
-   local ok,activated,reason=pcall(function()
-    prompt.RequiresLineOfSight=false
-    prompt.MaxActivationDistance=math.max(previousReach,reach)
+   local promptReach=math.max(reach,prompt.MaxActivationDistance+4)
+   local activated,reason=executorTools.WithPromptReach(prompt,promptReach,function()
     local fired,detail=executorTools.FirePrompt(prompt)
     if not fired and canInsert() and missingGlass()==needed then
      return executorTools.ActivateNativePrompt(prompt)
     end
     return fired,detail
    end)
-   prompt.MaxActivationDistance=previousReach
-   prompt.RequiresLineOfSight=previousLineOfSight
-   if not ok then error("Prompt d’insertion : "..tostring(activated),0) end
    if not activated then
     if active() then error("Prompt d’insertion : "..tostring(reason),0) end
     break
@@ -4456,7 +4464,7 @@ do
   if parent and parent:IsA("Attachment") then return parent.WorldPosition end
   if parent and parent:IsA("BasePart") then return parent.Position end
  end
- local function activate(prompt,token,active)
+ local function activate(prompt,token,active,isEntrance)
   local position=promptPosition(prompt)
   local _,_,root=getCharacterParts()
   if not root or not position or not prompt.Enabled or not active() then return false end
@@ -4466,6 +4474,11 @@ do
   end
   if not active() or not prompt.Enabled or (root.Position-position).Magnitude>prompt.MaxActivationDistance then return false end
   stopMovement(true)
+  if isEntrance then
+   return executorTools.WithPromptReach(prompt,prompt.MaxActivationDistance+4,function()
+    return executorTools.FirePrompt(prompt) or executorTools.ActivateNativePrompt(prompt)
+   end)
+  end
   return executorTools.ActivateNativePrompt(prompt) or executorTools.FirePrompt(prompt)
  end
  function trade.Exit(token)
@@ -4496,7 +4509,7 @@ do
    local prompt=entrance()
    local point=promptPosition(prompt)
    setStatus("Papillons · trajet vers l’Arbre enchanté")
-   if not point or not FusionModules.Helpers.DepartSafe(token,active,isSafe(point)==false) or not activate(prompt,token,active) then return end
+   if not point or not FusionModules.Helpers.DepartSafe(token,active,isSafe(point)==false) or not activate(prompt,token,active,true) then return end
    if not waitFor(trade.Inside,10,function()return activityValid(token,character)end) then return end
   end
   local prompt
