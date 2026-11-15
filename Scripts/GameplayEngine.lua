@@ -4176,7 +4176,8 @@ do
    local spark=util.DecodeSpark(entry)
    if spark then table.insert(candidates,spark) end
   end
-  local visited={}
+  local sent={}
+  local nextCollectAt=0
   local tierPriority={Golden=3,Purple=2,Blue=1}
   local direction=Vector3.zero
   local rise=false
@@ -4192,7 +4193,7 @@ do
     local target,distance,priority
     if player:GetAttribute(util.Attributes.Floating)==true then
      for _,spark in ipairs(candidates) do
-      if now>=spark.Born+rush.Flags.SparkBurstFlySeconds:Get() and now>=(visited[spark.Id] or 0) then
+      if now>=spark.Born+rush.Flags.SparkBurstFlySeconds:Get() and not sent[spark.Id] then
        local delta=util.SparkPosition(spark,center.Position,now)-root.Position
        local length=delta.Magnitude
        local rank=tierPriority[spark.Tier] or 1
@@ -4205,8 +4206,12 @@ do
     direction,rise=Vector3.zero,false
     if target then
      local delta=util.SparkPosition(target,center.Position,now)-root.Position
-     if distance<=rush.Flags.SparkCollectReach:Get()*.8 then
-      visited[target.Id]=now+30
+     if distance<=rush.Flags.SparkCollectReach:Get() then
+      if now>=nextCollectAt then
+       rush.Remotes.Collect:FireServer(target.Id)
+       sent[target.Id]=true
+       nextCollectAt=Workspace:GetServerTimeNow()+1
+      end
      else
       local flat=delta*Vector3.new(1,0,1)
       if flat.Magnitude>2 then direction=flat.Unit end
