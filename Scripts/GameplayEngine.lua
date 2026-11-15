@@ -4685,7 +4685,7 @@ function FusionModules.StormyEgg.Available()
   node=node:FindFirstChild(name)
   if not node then return nil end
  end
- if node:IsA("ProximityPrompt") and node.Enabled then return node,balance,price end
+ if node:IsA("ProximityPrompt") then return node,balance,price end
 end
 
 function FusionModules.StormyEgg.Run(token)
@@ -4706,26 +4706,55 @@ function FusionModules.StormyEgg.Run(token)
  local pedestal=prompt.Parent
  if not pedestal or not pedestal:IsA("BasePart") then return end
  local function inRange()
-  return (root.Position-pedestal.Position).Magnitude<=math.min(prompt.MaxActivationDistance,shop.Flags.GachaReach:Get())
+  return (root.Position-pedestal.Position).Magnitude<=shop.Flags.GachaReach:Get()
  end
  autoActivity="STORMY_EGG"
  shop.MoveValid=active
- local departed=FusionModules.Helpers.DepartSafe(token,active,isSafe(pedestal.Position)==false)
- shop.MoveValid=nil
- if not departed then return end
- if not inRange() then
-  local offset=Vector3.new(root.Position.X-pedestal.Position.X,0,root.Position.Z-pedestal.Position.Z)
-  local approach=offset.Magnitude>0 and offset.Unit*3 or Vector3.zero
-  local point=Vector3.new(pedestal.Position.X,root.Position.Y,pedestal.Position.Z)+approach
-  shop.MoveValid=function()return active() and shop.Available()==prompt end
-  setStatus("Stormy Egg · trajet vers le piédestal")
-  local reached=moveActivity(point,token,true)
-  shop.MoveValid=nil
-  if not reached then return end
+ local departed,detail=FusionModules.Helpers.DepartSafe(token,active,isSafe(pedestal.Position)==false)
+ if not departed then
+  if active() then error("Stormy Egg · départ : "..tostring(detail),0) end
+  return
  end
+ local flat=(root.Position-pedestal.Position)*Vector3.new(1,0,1)
+ local direction=flat.Magnitude>.1 and flat.Unit or pedestal.CFrame.LookVector
+ local point=pedestal.Position+direction*4
+ setStatus("Stormy Egg · approche du piédestal")
+ if distanceXZ(root.Position,point)>6 then
+  FusionModules.Helpers.PathMove(point,token,true)
+ end
+ if not active() then return end
+ local reached,reason=moveActivity(point,token,true,nil,nil,1.25)
+ shop.MoveValid=nil
+ if not active() then return end
+ if not reached then error("Stormy Egg · approche : "..tostring(reason),0) end
  stopMovement(true)
+ RunService.Heartbeat:Wait()
+ if not active() then return end
+ if distanceXZ(root.Position,point)>1.5 or not inRange() then
+  error(("Stormy Egg · arrêt non confirmé, piédestal à %.1f studs"):format((root.Position-pedestal.Position).Magnitude),0)
+ end
+ local tabs=require(ReplicatedStorage.Client.Tabs)
+ local tabName="StormheartCloudEgg"
+ if not tabs.IsActive(tabName) then
+  local deadline=os.clock()+5
+  while active() and inRange() and not prompt.Enabled and os.clock()<deadline do task.wait(.1) end
+  if not active() then return end
+  if not prompt.Enabled or not inRange() then error("Stormy Egg · prompt Achat indisponible",0) end
+  setStatus("Stormy Egg · ouverture de la boutique")
+  local opened=executorTools.ActivateNativePrompt(prompt)
+  deadline=os.clock()+2
+  while opened and active() and not tabs.IsActive(tabName) and os.clock()<deadline do task.wait(.1) end
+  if active() and inRange() and prompt.Enabled and not tabs.IsActive(tabName) then
+   executorTools.FirePrompt(prompt)
+   deadline=os.clock()+3
+   while active() and not tabs.IsActive(tabName) and os.clock()<deadline do task.wait(.1) end
+  end
+  if not active() then return end
+  if not tabs.IsActive(tabName) then error("Stormy Egg · ouverture de la boutique non confirmée",0) end
+  shop.OpenedTabs=tabs
+ end
  local remote=require(ReplicatedStorage.Shared.Remotes).StormheartCave.GachaBuy
- while active() and inRange() do
+ while active() and inRange() and tabs.IsActive(tabName) do
   local available,balance,price=shop.Available()
   if available~=prompt then return end
   setStatus("Stormy Egg · achat ("..tostring(price).." Thunderstones)")
@@ -4762,6 +4791,10 @@ end
 function FusionModules.StormyEgg.Idle(token)
  local shop=FusionModules.StormyEgg
  local ok=FusionModules.Protect("STORMY_EGG",shop.Run,token)
+ if shop.OpenedTabs and shop.OpenedTabs.IsActive("StormheartCloudEgg") then
+  shop.OpenedTabs.Deactivate({instant=true})
+ end
+ shop.OpenedTabs=nil
  shop.MoveValid=nil
  shop.Purchasing=false
  shop.RetryAt=math.max(shop.RetryAt,os.clock()+(ok and 5 or 20))
