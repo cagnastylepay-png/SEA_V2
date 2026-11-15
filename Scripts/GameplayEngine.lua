@@ -4295,9 +4295,16 @@ do
     return
    end
   end
-  local map
-  if not waitFor(function()map=util.LoadedMap();return map~=nil end,5,active) then return end
-  local conductor=util.Marker(map,util.Markers.Conductor)
+  local map,conductor
+  local loaded=waitFor(function()
+   map=util.LoadedMap()
+   conductor=util.Marker(map,util.Markers.Conductor)
+   return conductor~=nil
+  end,8,active)
+  if not loaded then
+   if active() then error("Conducteur Stormheart indisponible après l’entrée",0) end
+   return
+  end
   if conductor and util.State()=="Idle" and insertedGlass()>0 and active() then
    setStatus("Storm Rush · attente de l’activation (60 s)")
    waitFor(function()return util.State()~="Idle" or insertedGlass()==0 end,60,active)
@@ -4306,32 +4313,50 @@ do
    local needed=missingGlass()
    local inventory=profile().GearInventory
    if needed<=0 or not inventory or (inventory[util.GearId] or 0)<needed then break end
-   if not equipGlass(character,humanoid) then break end
-   local prompt=conductor:FindFirstChild("InsertPrompt")
-   if not waitFor(function()return prompt and prompt.Enabled end,1,active) then break end
+   local function idle()
+    return active() and util.State()=="Idle"
+   end
+   local prompt
+   if not waitFor(function()
+    prompt=conductor:FindFirstChild("InsertPrompt")
+    return prompt and prompt:IsA("ProximityPrompt")
+   end,5,idle) then
+    if idle() then error("Prompt d’insertion introuvable",0) end
+    break
+   end
    local point=promptPosition(prompt)
    local _,_,root=getCharacterParts()
    if not point or not root then break end
    local reach=rush.Flags.ConductorReach:Get()
-   local function canInsert()
-    return active() and util.State()=="Idle" and prompt.Enabled and prompt:IsDescendantOf(Workspace)
-   end
+   local nativeReach=math.min(reach,prompt.MaxActivationDistance)
+   local brakeDistance=math.max(nativeReach-3,nativeReach*.65)
    local function withinApproach(position)
-    return (position-point).Magnitude<=math.max(reach-3,reach*.5)
+    return (position-point).Magnitude<=brakeDistance
    end
-   if (root.Position-point).Magnitude>reach then
-    rush.MoveValid=canInsert
+   setStatus("Storm Rush · approche du conducteur")
+   if not withinApproach(root.Position) then
+    rush.MoveValid=idle
     moveActivity(point,token,true,nil,withinApproach)
     rush.MoveValid=nil
    end
-   if not canInsert() then break end
+   if not idle() then break end
    stopMovement(true)
    RunService.Heartbeat:Wait()
-   local currentPoint=promptPosition(prompt)
-   if not canInsert() or not currentPoint then break end
-   local distance=(root.Position-currentPoint).Magnitude
-   if distance>reach then
-    error(("Prompt d’insertion à %.1f studs, portée %.1f"):format(distance,reach),0)
+   if (root.Position-point).Magnitude>nativeReach then
+    error(("Conducteur à %.1f studs, portée du prompt %.1f"):format((root.Position-point).Magnitude,nativeReach),0)
+   end
+   setStatus("Storm Rush · équipement du Stormglass")
+   if not waitFor(function()return equipGlass(character,humanoid)end,3,idle) then
+    if idle() then error("Stormglass non équipé",0) end
+    break
+   end
+   local function canInsert()
+    return idle() and prompt.Enabled and prompt:IsDescendantOf(Workspace)
+     and (root.Position-point).Magnitude<=nativeReach
+   end
+   if not waitFor(canInsert,3,idle) then
+    if idle() then error("Prompt d’insertion non disponible après l’arrêt",0) end
+    break
    end
    if missingGlass()~=needed then continue end
    setStatus("Storm Rush · insertion du Stormglass")
