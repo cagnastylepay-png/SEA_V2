@@ -4710,7 +4710,7 @@ function FusionModules.StormyEgg.Run(token)
  end
  autoActivity="STORMY_EGG"
  shop.MoveValid=active
- local departed,detail=FusionModules.Helpers.DepartSafe(token,active,isSafe(pedestal.Position)==false)
+ local departed,detail=FusionModules.Helpers.DepartSafe(token,active,false)
  if not departed then
   if active() then error("Stormy Egg · départ : "..tostring(detail),0) end
   return
@@ -4719,11 +4719,12 @@ function FusionModules.StormyEgg.Run(token)
  local direction=flat.Magnitude>.1 and flat.Unit or pedestal.CFrame.LookVector
  local point=pedestal.Position+direction*4
  setStatus("Stormy Egg · approche du piédestal")
- if distanceXZ(root.Position,point)>6 then
-  FusionModules.Helpers.PathMove(point,token,true)
- end
- if not active() then return end
  local reached,reason=moveActivity(point,token,true,nil,nil,1.25)
+ if not reached and active() then
+  setStatus("Stormy Egg · contournement vers le piédestal")
+  reached,reason=FusionModules.Helpers.PathMove(point,token,true)
+  if reached and active() then reached,reason=moveActivity(point,token,true,nil,nil,1.25) end
+ end
  shop.MoveValid=nil
  if not active() then return end
  if not reached then error("Stormy Egg · approche : "..tostring(reason),0) end
@@ -4790,7 +4791,7 @@ end
 
 function FusionModules.StormyEgg.Idle(token)
  local shop=FusionModules.StormyEgg
- local ok=FusionModules.Protect("STORMY_EGG",shop.Run,token)
+ local ok,reason=FusionModules.Protect("STORMY_EGG",shop.Run,token)
  if shop.OpenedTabs and shop.OpenedTabs.IsActive("StormheartCloudEgg") then
   shop.OpenedTabs.Deactivate({instant=true})
  end
@@ -4798,7 +4799,14 @@ function FusionModules.StormyEgg.Idle(token)
  shop.MoveValid=nil
  shop.Purchasing=false
  shop.RetryAt=math.max(shop.RetryAt,os.clock()+(ok and 5 or 20))
- if generation==token then stopMovement(true);autoActivity="IDLE" end
+ if generation==token then
+  stopMovement(true)
+  autoActivity="IDLE"
+  if not ok then
+   setStatus(tostring(reason):match("^[^\n]+") or "Stormy Egg · achat interrompu")
+   task.wait(2)
+  end
+ end
 end
 
 function FusionModules.Helpers.FishingMode()
