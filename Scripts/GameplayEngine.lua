@@ -4337,8 +4337,8 @@ do
    return
   end
   if conductor and util.State()=="Idle" and insertedGlass()>0 and active() then
-   setStatus("Storm Rush · attente de l’activation (60 s)")
-   waitFor(function()return util.State()~="Idle" or insertedGlass()==0 end,60,active)
+   setStatus("Storm Rush · attente de l’activation (30 s)")
+   waitFor(function()return util.State()~="Idle" or insertedGlass()==0 end,30,active)
   end
   local function glassCount()
    local inventory=profile().GearInventory
@@ -4398,20 +4398,22 @@ do
    if changed() then return true end
    setStatus(("Storm Rush · insertion du Stormglass (%d/3)"):format(attempt))
    local promptReach=math.max(reach,prompt.MaxActivationDistance+4)
-   local activated,reason=executorTools.WithPromptReach(prompt,promptReach,function()
-    local fired,detail=executorTools.FirePrompt(prompt)
-    if not fired and canInsert() and not changed() then
-     return executorTools.ActivateNativePrompt(prompt)
-    end
-    return fired,detail
-   end)
-   if not activated then return false,"activation du prompt : "..tostring(reason) end
+   -- An executor call can return successfully without triggering the prompt.
+   -- Use the game's native hold on the next approach if nothing changed.
+   local activate=attempt==2 and executorTools.ActivateNativePrompt or executorTools.FirePrompt
+   local activated,reason=executorTools.WithPromptReach(prompt,promptReach,activate)
    if waitFor(changed,4,active) then return true end
+   if not activated then return false,"activation du prompt : "..tostring(reason) end
    return false,"insertion non confirmée par le jeu"
   end
   while idle() and conductor do
    local needed,stock=missingGlass(),glassCount()
-   if needed<=0 or stock<needed then break end
+   if needed<=0 then break end
+   if stock<needed then
+    setStatus(("Storm Rush · Stormglass insuffisant (%d en stock, %d requis)"):format(stock,needed))
+    log("ACTION","Storm Rush : %d Stormglass en stock, %d requis",stock,needed)
+    break
+   end
    local confirmed,reason
    for attempt=1,3 do
     if not idle() then break end
