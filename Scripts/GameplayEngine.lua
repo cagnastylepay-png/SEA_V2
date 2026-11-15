@@ -3982,6 +3982,7 @@ function FusionModules.Skyfall.Run(token)
     setStatus("Skyfall · frappe automatique")
     local health=target:GetAttribute("Health")
     local deadline=os.clock()+25
+    local recovering=false
     while targetActive() and os.clock()<deadline do
      local remaining=target:GetAttribute("Health")
      if remaining~=health then health=remaining;deadline=os.clock()+25 end
@@ -3990,9 +3991,21 @@ function FusionModules.Skyfall.Run(token)
       humanoid:EquipTool(bat)
       sky.EquippedBat=bat
      end
-     if distanceXZ(root.Position,target.Position)>6 then break end
+     local distance=distanceXZ(root.Position,target.Position)
+     if distance>6 or (recovering and distance>3) then
+      if not recovering then setStatus("Skyfall · retour vers le même rocher") end
+      recovering=true
+      if not motionBlockReason({character=character}) then
+       move(Vector3.new(target.Position.X,root.Position.Y,target.Position.Z),{Radius=3})
+      end
+     elseif recovering then
+      recovering=false
+      stopMovement(true)
+      setStatus("Skyfall · frappe automatique")
+     end
      task.wait(CONFIG.ScanInterval)
     end
+    if recovering then stopMovement(true) end
    end
    if targetActive() then
     skipped[target]={Infused=sky.IsInfused(target),Until=os.clock()+2}
