@@ -5054,6 +5054,30 @@ local function initialize()
 	serverSearchReadyAt = os.clock()+15
 	wallMaintenancePending = true
 	ready = true
+ if FusionModules.Reporting.ClientKind=="admin" and remotes.AwayEarnings then
+  task.defer(function()
+   FusionModules.Protect("OFFLINE_MONEY",function()
+    local away=remotes.AwayEarnings
+    local summary
+    for attempt=1,3 do
+     if destroyed then return end
+     local ok,result=pcall(function()return away.FetchSummary:InvokeServer()end)
+     if ok and type(result)=="table" and type(result.ClaimableAmount)=="number" then
+      summary=result
+      break
+     end
+     if attempt<3 then task.wait(1) end
+    end
+    if not summary then error("Solde hors ligne indisponible",0) end
+    if destroyed or summary.ClaimableAmount<=0 or summary.IsMultiplierPurchasePending==true then return end
+    local accepted,reason,result=away.AskCollect:InvokeServer({Kind="Claim"})
+    if accepted~=true or type(result)~="table" or type(result.AwardedAmount)~="number" then
+     error("Argent hors ligne : récupération non confirmée ("..tostring(reason)..")",0)
+    end
+    log("ACTION","Argent hors ligne récupéré : %s",formatNumber(result.AwardedAmount))
+   end)
+  end)
+ end
     FusionModules.Reporting.Start()
 	setStatus("AUTO ON : recherche des oeufs, sinon entrainement au tapis.", Color3.fromRGB(96, 230, 145))
 	syncQueue()
