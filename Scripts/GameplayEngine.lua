@@ -4315,8 +4315,20 @@ do
    if distance>reach then
     error(("Prompt d’insertion à %.1f studs, portée %.1f"):format(distance,reach),0)
    end
-   if not executorTools.FirePrompt(prompt) then break end
-   if not waitFor(function()return util.State()~="Idle" or missingGlass()<needed end,4,active) then break end
+   if missingGlass()~=needed then continue end
+   setStatus("Storm Rush · insertion du Stormglass")
+   local activated,reason=executorTools.ActivateNativePrompt(prompt)
+   if not activated and canInsert() and missingGlass()==needed then
+    activated,reason=executorTools.FirePrompt(prompt)
+   end
+   if not activated then
+    if active() then error("Prompt d’insertion : "..tostring(reason),0) end
+    break
+   end
+   if not waitFor(function()return util.State()~="Idle" or missingGlass()<needed end,4,active) then
+    if active() then error("Insertion du Stormglass non confirmée par le jeu",0) end
+    break
+   end
   end
   if util.State()=="Charging" or util.State()=="Rush" then
    setStatus("Storm Rush · attente des Sparks")
