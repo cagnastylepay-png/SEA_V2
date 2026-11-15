@@ -98,6 +98,7 @@ end
 FusionModules.Options.AutoSkyfall=false
 FusionModules.Options.AutoSlickRick=false
 FusionModules.Options.AutoStormyEgg=false
+FusionModules.Options.AutoStormRush=false
 FusionModules.Options.AutoPlotUpgrade=false
 FusionModules.Options.IdleMode="Treadmill"
 FusionModules.Options.AutoCosmicEclipse=false
@@ -381,7 +382,7 @@ local function loadSettings()
 		minimumRatePerSecond = minimum * 1e9
 	end
  for key,value in pairs(FusionModules.Options)do
-  if type(value)=="boolean"and key~="AutoCosmicEclipse"and key~="AutoSkyfall"and key~="AutoStormyEgg"and key~="AutoSlickRick"and key~="AutoPlotUpgrade"and key~="AutoTreadmillUpgrade"and key~="AutoHelp"and key~="AutoMutations"and key~="AutoSellAnimals"and not key:match("^Mutation")then FusionModules.Options[key]=automaticMode end
+  if type(value)=="boolean"and key~="AutoCosmicEclipse"and key~="AutoSkyfall"and key~="AutoStormyEgg"and key~="AutoStormRush"and key~="AutoSlickRick"and key~="AutoPlotUpgrade"and key~="AutoTreadmillUpgrade"and key~="AutoHelp"and key~="AutoMutations"and key~="AutoSellAnimals"and not key:match("^Mutation")then FusionModules.Options[key]=automaticMode end
  end
  FusionModules.Options.AutoEggsMin=minimumRatePerSecond
  FusionModules.Options.AutoSellMax=minimumRatePerSecond
@@ -2502,6 +2503,10 @@ local function moveActivity(destination, token, interruptForEgg, nextDestination
   if autoActivity=="STORMY_EGG" and FusionModules.StormyEgg.MoveValid and not FusionModules.StormyEgg.MoveValid() then
    stopMovement(true);return false,"Stormy Egg interrompu"
   end
+  if autoActivity=="STORM_RUSH" and FusionModules.StormRush.MoveValid and not FusionModules.StormRush.MoveValid() then
+   stopMovement(true);return false,"Storm Rush interrompu"
+  end
+  if autoActivity=="TO_TREADMILL" and FusionModules.StormRush.Available() then stopMovement(true);return false,"storm rush"end
   if autoActivity=="TO_TREADMILL" and FusionModules.StormyEgg.Available() then stopMovement(true);return false,"stormy egg"end
   if autoActivity=="SLICK_RICK" and FusionModules.SlickRick.MoveValid and not FusionModules.SlickRick.MoveValid() then
    stopMovement(true);return false,"Slick Rick interrompu"
@@ -3599,7 +3604,7 @@ function FusionModules.Butterflies.Idle(token)
  log("ACTION","Collecte des papillons en cours")
  setStatus("Papillons : filet equipe jusqu'au prochain cycle d'oeufs.")
  while FusionModules.Options.AutoPapillon and activityValid(token,character) and automaticMode and not stopAfterFlight
-  and b.Revision==revision and Workspace:GetServerTimeNow()<b.Until and not FusionModules.Skyfall.Available() and not FusionModules.Helpers.FishingMode() and not FusionModules.SlickRick.Available() and not FusionModules.StormyEgg.Available() do
+  and b.Revision==revision and Workspace:GetServerTimeNow()<b.Until and not FusionModules.Skyfall.Available() and not FusionModules.Helpers.FishingMode() and not FusionModules.SlickRick.Available() do
   local present,net=b.Available(true)
   if not present then break end
   if net.Parent~=character then humanoid:EquipTool(net) end
@@ -3842,7 +3847,7 @@ function FusionModules.Skyfall.Run(token)
  local function active()
   return activityValid(token,character) and automaticMode and not stopAfterFlight
    and not serverHopPending and not FusionModules.CollectionReturnPending
-   and next(queuedEggs)==nil and sky.Rocks()~=nil and not FusionModules.SlickRick.Available() and not FusionModules.StormyEgg.Available()
+   and next(queuedEggs)==nil and sky.Rocks()~=nil and not FusionModules.SlickRick.Available()
  end
  if player:GetAttribute("InAlienLagoon")==true then
   local runtime=FusionModules.AdminRuntime
@@ -3917,11 +3922,276 @@ function FusionModules.Skyfall.Idle(token)
  if not ok then sky.RetryAt=os.clock()+10 else sky.RetryAt=os.clock()+1 end
 end
 
+FusionModules.StormRush={RetryAt=0}
+
+function FusionModules.StormRush.Bind(remotes)
+ local rush=FusionModules.StormRush
+ if FusionModules.Reporting.ClientKind~="admin" or not remotes.StormheartCave then return end
+ rush.Util=require(ReplicatedStorage.Shared.Util.StormheartCave)
+ rush.Flags=require(ReplicatedStorage.Shared.Flags.StormheartCaveFlags)
+ rush.Remotes=remotes.StormheartCave
+ connect(rush.Remotes.Rush.OnClientEvent,function(action,payload)
+  if action=="Begin" and type(payload)=="table" and type(payload.EndsAt)=="number" then
+   rush.Round=payload
+  elseif action=="End" or action=="Left" then
+   rush.Round=nil
+  end
+ end)
+end
+
+function FusionModules.Helpers.TreadmillOnly()
+ return FusionModules.Options.AutoTreadmill and next(queuedEggs)==nil
+  and not stopAfterFlight and not serverHopPending and not FusionModules.CollectionReturnPending
+  and not (FusionModules.RemoteHop and FusionModules.RemoteHop.Pending)
+  and not FusionModules.SlickRick.Available() and not FusionModules.Helpers.FishingMode()
+  and not FusionModules.Skyfall.Available() and not FusionModules.Butterflies.Available()
+end
+
+do
+ local rush=FusionModules.StormRush
+ local function profile()
+  return Save.Peek() or {}
+ end
+ local function sparks()
+  local data=profile()[rush.Util.ProfileKey]
+  return data and data[rush.Util.SparksField] or 0
+ end
+ local function insertedGlass()
+  return Workspace:GetAttribute(rush.Util.Attributes.Pool) or 0
+ end
+ local function missingGlass()
+  local attrs=rush.Util.Attributes
+  local cost=Workspace:GetAttribute(attrs.Cost) or rush.Flags.ActivationCost:Get()
+  return math.max(0,cost-insertedGlass())
+ end
+ local function entrance()
+  local node=Workspace
+  for _,name in ipairs({"World","Build","Props","Zone8.5Props","Folder","StormheartCaveMouth","EnterZone"}) do
+   node=node:FindFirstChild(name)
+   if not node then return nil end
+  end
+  return node:FindFirstChildWhichIsA("ProximityPrompt",true)
+ end
+ local function waitFor(test,seconds,valid)
+  local deadline=os.clock()+seconds
+  repeat
+   if test() then return true end
+   if valid and not valid() then return false end
+   task.wait(.1)
+  until os.clock()>=deadline
+  return false
+ end
+ local function promptPosition(prompt)
+  local parent=prompt.Parent
+  if parent and parent:IsA("Attachment") then return parent.WorldPosition end
+  if parent and parent:IsA("BasePart") then return parent.Position end
+  if parent and parent:IsA("Model") then return parent:GetPivot().Position end
+ end
+ local function approach(point,reach,token,valid)
+  local _,_,root=getCharacterParts()
+  if not root or not point or not valid() then return false end
+  if (root.Position-point).Magnitude<=reach then return true end
+  local flat=(root.Position-point)*Vector3.new(1,0,1)
+  local offset=flat.Magnitude>0 and flat.Unit*math.min(2,reach*.25) or Vector3.zero
+  rush.MoveValid=valid
+  moveActivity(point+offset,token,false)
+  rush.MoveValid=nil
+  return valid() and (root.Position-point).Magnitude<=reach
+ end
+ local function press(prompt,token,valid)
+  if not prompt or not prompt.Enabled or not approach(promptPosition(prompt),prompt.MaxActivationDistance,token,valid) then return false end
+  return executorTools.FirePrompt(prompt)
+ end
+ local function equipGlass(character,humanoid)
+  local function find(parent)
+   if not parent then return end
+   for _,tool in ipairs(parent:GetChildren()) do
+    if tool:IsA("Tool") and tool:GetAttribute("GearName")==rush.Util.GearId then return tool end
+   end
+  end
+  if find(character) then return true end
+  local tool=find(player:FindFirstChildOfClass("Backpack"))
+  if not tool then return false end
+  humanoid:EquipTool(tool)
+  return tool.Parent==character
+ end
+
+ function rush.Inside()
+  return rush.Util and player:GetAttribute(rush.Util.Attributes.Inside)==true
+ end
+
+ function rush.Available()
+  if not rush.Remotes or not FusionModules.Options.AutoStormRush or os.clock()<rush.RetryAt
+   or not FusionModules.Helpers.TreadmillOnly() then return false end
+  local util=rush.Util
+  local state=util.State()
+  if not rush.Inside() then
+   local prompt=entrance()
+   if not prompt or not prompt.Enabled then return false end
+  end
+  if state=="Charging" or (state=="Rush" and player:GetAttribute(util.Attributes.Eligible)==true) then return true end
+  if sparks()>=rush.Flags.SparkTradePrice:Get() and sparks()~=rush.UncertainBalance then return true end
+  if state=="Idle" and insertedGlass()>=2 then return true end
+  local needed=state=="Idle" and missingGlass() or 0
+  local gear=profile().GearInventory
+  return needed>0 and gear and (gear[util.GearId] or 0)>=needed
+ end
+
+ function rush.Exit(token)
+  if not rush.Inside() then return true end
+  local character=getCharacterParts()
+  local function valid() return activityValid(token,character) end
+  local util=rush.Util
+  local exit=util.Marker(util.LoadedMap(),util.Markers.Exit)
+  if not exit then return false end
+  local prompt=exit:FindFirstChildWhichIsA("ProximityPrompt",true)
+  autoActivity="STORM_RUSH"
+  if prompt then
+   if not press(prompt,token,valid) then return false end
+  else
+   if not approach(exit.Position,4,token,valid) then return false end
+   local _,humanoid=getCharacterParts()
+   if humanoid then humanoid:MoveTo(exit.Position) end
+  end
+  return waitFor(function()return not rush.Inside()end,10,valid)
+ end
+
+ local function fly(round,map,humanoid,root,valid)
+  local util=rush.Util
+  local center=util.Marker(map,util.Markers.FlightCenter)
+  if not center then return end
+  local candidates={}
+  for _,entry in pairs(type(round.Sparks)=="table" and round.Sparks or {}) do
+   local spark=util.DecodeSpark(entry)
+   if spark then table.insert(candidates,spark) end
+  end
+  local visited={}
+  local direction=Vector3.zero
+  local rise=false
+  local input="SEA_StormRush_"..tostring({})
+  RunService:BindToRenderStep(input,Enum.RenderPriority.Input.Value+1,function()
+   humanoid:Move(direction,false)
+   humanoid.Jump=rise
+  end)
+  local ok,err=pcall(function()
+   while valid() and rush.Round==round and rush.Inside() do
+    local now=Workspace:GetServerTimeNow()
+    if now>=round.EndsAt then break end
+    local target,distance
+    if player:GetAttribute(util.Attributes.Floating)==true then
+     for _,spark in ipairs(candidates) do
+      if now>=spark.Born+rush.Flags.SparkBurstFlySeconds:Get() and now>=(visited[spark.Id] or 0) then
+       local delta=util.SparkPosition(spark,center.Position,now)-root.Position
+       local length=delta.Magnitude
+       if not distance or length<distance then target,distance=spark,length end
+      end
+     end
+    end
+    direction,rise=Vector3.zero,false
+    if target then
+     local delta=util.SparkPosition(target,center.Position,now)-root.Position
+     if distance<=rush.Flags.SparkCollectReach:Get()*.8 then
+      visited[target.Id]=now+30
+     else
+      local flat=delta*Vector3.new(1,0,1)
+      if flat.Magnitude>2 then direction=flat.Unit end
+      rise=delta.Y>2
+     end
+    end
+    task.wait(.08)
+   end
+  end)
+  RunService:UnbindFromRenderStep(input)
+  humanoid:Move(Vector3.zero,false)
+  humanoid.Jump=false
+  if not ok then error(err,0) end
+ end
+
+ function rush.Run(token)
+  local character,humanoid,root=getCharacterParts()
+  if not root or not rush.Available() then return end
+  local util=rush.Util
+  local function active()
+   return activityValid(token,character) and automaticMode and FusionModules.Options.AutoStormRush
+    and FusionModules.Helpers.TreadmillOnly()
+  end
+  local left,why=leaveTreadmill(token)
+  if not left then error(why,0) end
+  if not active() or not rush.Available() then return end
+  autoActivity="STORM_RUSH"
+  rush.Managed=true
+  if not rush.Inside() then
+   setStatus("Storm Rush · trajet vers la grotte")
+   if not press(entrance(),token,active) then return end
+   -- Let the native trip settle even if a higher-priority activity arrives.
+   if not waitFor(rush.Inside,10,function()return activityValid(token,character)end) then return end
+  end
+  local map
+  if not waitFor(function()map=util.LoadedMap();return map~=nil end,5,active) then return end
+  local conductor=util.Marker(map,util.Markers.Conductor)
+  while active() and util.State()=="Idle" and conductor do
+   local needed=missingGlass()
+   local inventory=profile().GearInventory
+   if needed<=0 or not inventory or (inventory[util.GearId] or 0)<needed then break end
+   if not equipGlass(character,humanoid) then break end
+   local prompt=conductor:FindFirstChild("InsertPrompt")
+   if not waitFor(function()return prompt and prompt.Enabled end,1,active) then break end
+   if not press(prompt,token,function()return active() and util.State()=="Idle" end) then break end
+   if not waitFor(function()return util.State()~="Idle" or missingGlass()<needed end,4,active) then break end
+  end
+  if util.State()=="Idle" and insertedGlass()>=2 and active() then
+   setStatus("Storm Rush · deux Stormglass insérés, attente de l’activation")
+   waitFor(function()return util.State()~="Idle"end,20,function()return active() and insertedGlass()>=2 end)
+  end
+  if util.State()=="Charging" or util.State()=="Rush" then
+   setStatus("Storm Rush · attente des Sparks")
+   waitFor(function()return rush.Round and rush.Round.Eligible==true end,20,function()
+    local state=util.State()
+    return active() and (state=="Charging" or state=="Rush")
+   end)
+   local round=rush.Round
+   if active() and round and round.Eligible==true then
+    setStatus("Storm Rush · collecte des Sparks")
+    fly(round,map,humanoid,root,active)
+    waitFor(function()return player:GetAttribute(util.Attributes.Floating)~=true end,5,active)
+   end
+  end
+  local npcs=map:FindFirstChild("Npcs")
+  local rumble=npcs and npcs:FindFirstChild("Rumble")
+  local talk=rumble and rumble:FindFirstChild("TalkPrompt",true)
+  local price=rush.Flags.SparkTradePrice:Get()
+  if active() and price>0 and sparks()>=price and sparks()~=rush.UncertainBalance and rumble then
+   local point=talk and promptPosition(talk) or rumble:GetPivot().Position
+   if not approach(point,rush.Flags.RumbleReach:Get(),token,active) then return end
+   while active() and sparks()>=price and sparks()~=rush.UncertainBalance do
+    local balance=sparks()
+    setStatus("Storm Rush · échange chez Rumble")
+    local ok,traded=pcall(function()return rush.Remotes.Trade:InvokeServer()end)
+    if not ok or type(traded)~="boolean" then rush.UncertainBalance=balance;error("Échange Sparks : résultat incertain",0) end
+    if not traded then return end
+    if not waitFor(function()return sparks()<balance end,5) then
+     rush.UncertainBalance=balance
+     error("Échange Sparks : solde non synchronisé",0)
+    end
+    log("ACTION","Rumble : échange Sparks confirmé")
+   end
+  end
+ end
+
+ function rush.Idle(token)
+  FusionModules.Protect("STORM_RUSH",rush.Run,token)
+  rush.MoveValid=nil
+  rush.RetryAt=os.clock()+10
+  if generation==token then stopMovement(true);autoActivity="IDLE" end
+ end
+end
+
 FusionModules.StormyEgg={RetryAt=0}
 
 function FusionModules.StormyEgg.Available()
  local shop=FusionModules.StormyEgg
  if FusionModules.Reporting.ClientKind~="admin" or not FusionModules.Options.AutoStormyEgg
+  or not FusionModules.Helpers.TreadmillOnly() or FusionModules.StormRush.Available()
   or not Save or os.clock()<shop.RetryAt then return nil end
  if not shop.Util then
   local ok,util,flags=pcall(function()
@@ -3954,8 +4224,7 @@ function FusionModules.StormyEgg.Run(token)
  local function active()
   return activityValid(token,character) and automaticMode and not stopAfterFlight
    and not serverHopPending and not FusionModules.CollectionReturnPending
-   and next(queuedEggs)==nil and not FusionModules.SlickRick.Available()
-   and not FusionModules.Helpers.FishingMode()
+   and FusionModules.Helpers.TreadmillOnly() and not FusionModules.StormRush.Available()
  end
  if not active() then return end
  local exited,reason=leaveTreadmill(token)
@@ -4141,7 +4410,7 @@ local function idleOnTreadmill(token)
 		local destination = bottom.Position + Vector3.new(0, humanoid.HipHeight + 2, 0)
 		local ok, reason = measureAction("ENTREE_TAPIS", moveActivity, destination, token, true)
 		if not ok then
-			if reason == "nouvel oeuf"or reason=="tapis OFF"or reason=="skyfall"or reason=="eclipse"or reason=="slick rick"or reason=="stormy egg"then return true end
+			if reason == "nouvel oeuf"or reason=="tapis OFF"or reason=="skyfall"or reason=="eclipse"or reason=="slick rick"or reason=="stormy egg"or reason=="storm rush"then return true end
 			return false, reason
 		end
 		-- The normal controller detects entry with its downward raycast.
@@ -4161,7 +4430,7 @@ local function idleOnTreadmill(token)
 	if destroyed or not autoEnabled or generation ~= token then return true end
 	setStatus("TREADMILL : entrainement, attente d'un oeuf...")
 	while autoEnabled and generation == token and automaticMode and not queuePaused
-		and not FusionModules.Helpers.FishingMode()and FusionModules.Options.AutoTreadmill and next(queuedEggs) == nil and not activityRecheckPending and not FusionModules.Butterflies.Available() and not FusionModules.Skyfall.Available() and not FusionModules.SlickRick.Available() and not FusionModules.StormyEgg.Available() and not destroyed do
+		and not FusionModules.Helpers.FishingMode()and FusionModules.Options.AutoTreadmill and next(queuedEggs) == nil and not activityRecheckPending and not FusionModules.Butterflies.Available() and not FusionModules.Skyfall.Available() and not FusionModules.SlickRick.Available() and not FusionModules.StormRush.Available() and not FusionModules.StormyEgg.Available() and not destroyed do
 		serviceWallMaintenance(token)
   if FusionModules.AdminRuntime and FusionModules.AdminRuntime.ProgressTravelling and FusionModules.AdminRuntime.ProgressTravelling()then task.wait(CONFIG.ScanInterval);continue end
 		if not treadmillAssigned and autoActivity ~= "TREADMILL" then return true end
@@ -4276,7 +4545,18 @@ local function worker(token)
 			return
 		end
 		syncQueue()
-		local selected, rate, recovering
+		if FusionModules.StormRush.Managed and FusionModules.StormRush.Inside() then
+            setStatus("Storm Rush · sortie de la grotte")
+            if FusionModules.StormRush.Exit(token) then
+                FusionModules.StormRush.Managed=false
+                autoActivity="IDLE"
+            else
+                task.wait(1)
+            end
+            continue
+        end
+        FusionModules.StormRush.Managed=false
+        local selected, rate, recovering
 		if carry.IsCarrying and carry.Uid then
 			if not queuedEggs[carry.Uid] then
 				stopAutomation("Un oeuf hors de la file est deja porte")
@@ -4367,12 +4647,14 @@ local function worker(token)
             elseif automaticMode and FusionModules.Helpers.FishingMode() then
                 local ok,reason=FusionModules.Helpers.FishingIdle(token)
                 if not ok then stopAutomation("Cosmic Eclipse : "..tostring(reason));return end
-            elseif automaticMode and FusionModules.StormyEgg.Available() then
-                FusionModules.StormyEgg.Idle(token)
             elseif automaticMode and FusionModules.Skyfall.Available() then
                 FusionModules.Skyfall.Idle(token)
             elseif automaticMode and not FusionModules.Helpers.FishingMode()and FusionModules.Butterflies.Available() then
 				FusionModules.Butterflies.Idle(token)
+            elseif automaticMode and FusionModules.StormRush.Available() then
+                FusionModules.StormRush.Idle(token)
+            elseif automaticMode and FusionModules.StormyEgg.Available() then
+                FusionModules.StormyEgg.Idle(token)
 			elseif automaticMode then
 				serverSearchState = "OFF"
 				local ok, reason = idleOnTreadmill(token)
@@ -4475,6 +4757,7 @@ local function initialize()
 	PlacedEggRenderer = loadModule("Shared.Eggs.PlacedEggRenderer")
 	EggGrowthPolicy = loadModule("Shared.Eggs.PlacedEggGrowthPresentationPolicy")
 	local remotes = loadModule("Shared.Remotes")
+ FusionModules.Protect("STORM_RUSH_INIT",FusionModules.StormRush.Bind,remotes)
 
  -- Subscribe before fetching so a late snapshot cannot overwrite a newer event.
  do
@@ -4844,6 +5127,7 @@ function FusionModules.RemoteHop.Receive(message)
  hop.Try()
 end
 function FusionModules.RemoteHop.Try()
+ if autoActivity=="STORM_RUSH" or (FusionModules.StormRush.Managed and FusionModules.StormRush.Inside()) then return false end
  if FusionModules.StormyEgg and FusionModules.StormyEgg.Purchasing then return false end
  if FusionModules.SlickRick and FusionModules.SlickRick.Purchasing then return false end
  if FusionModules.BetweenFlights then return false end
