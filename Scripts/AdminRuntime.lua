@@ -638,7 +638,13 @@ return function(ctx)
    assert(ctx.Report.SettingsRevision==m.settingsRevision,"Parametres modifies dans le jeu")
    assert(ctx.SetOptions(m.options),"Parametres invalides");return true
   elseif m.action=="fishing.set"then return A.SetFishing(m.enabled)
-  elseif m.action=="automation.set"then assert(not A.Fishing,"Arrête AutoFishing avant de modifier AUTO");ctx.SetEnabled(m.enabled);return true end
+  elseif m.action=="automation.set"then
+   assert(type(m.enabled)=="boolean","Valeur AUTO invalide")
+   if A.Fishing and not m.enabled then stopFishing()
+   elseif A.Fishing then assert(A.FishingAutomatic,"Arrête AutoFishing avant de démarrer AUTO") end
+   ctx.SetEnabled(m.enabled)
+   return true
+  end
   assert(not A.Fishing,"Arrête AutoFishing avant cette action")
   if ctx.BeginManual then assert(ctx.ManualCanContinue(),"Action manuelle interrompue : priorite au vol")
   else assert(not ctx.Busy(),"Action en cours")end
