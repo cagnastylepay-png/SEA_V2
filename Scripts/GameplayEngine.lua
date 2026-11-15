@@ -3766,13 +3766,13 @@ end
 
 FusionModules.SlickRick={RetryAt=0}
 
-function FusionModules.SlickRick.Available()
+function FusionModules.SlickRick.Available(inProgress)
  local market=FusionModules.SlickRick
  if FusionModules.Reporting.ClientKind~="admin" or not FusionModules.Options.AutoSlickRick
   or os.clock()<market.RetryAt then return nil end
  local visit=Workspace:GetAttribute("BlackMarketVisitId")
  local expires=Workspace:GetAttribute("BlackMarketLeavesAt")
- if type(visit)=="number" and visit~=market.CompletedVisit
+ if type(visit)=="number" and (inProgress or visit~=market.CompletedVisit)
   and type(expires)=="number" and expires>Workspace:GetServerTimeNow() then return visit end
 end
 
@@ -3806,7 +3806,7 @@ function FusionModules.SlickRick.Run(token,visit)
  local function active()
   return activityValid(token,character) and automaticMode and not stopAfterFlight
    and not serverHopPending and not FusionModules.CollectionReturnPending
-   and next(queuedEggs)==nil and market.Available()==visit
+   and next(queuedEggs)==nil and market.Available(true)==visit
  end
  local profile=Save.Peek()
  if not profile then return end
@@ -3877,6 +3877,7 @@ function FusionModules.SlickRick.Run(token,visit)
    error("Résultat d’achat incertain pour "..id,0)
   end
   if bought then
+   market.CompletedVisit=visit
    budget-=price
    log("ACTION","Slick Rick : achat confirmé de %s",item.DisplayName)
    if not catalog.IsStackable(item) then
