@@ -4321,72 +4321,94 @@ do
    setStatus("Storm Rush · attente de l’activation (60 s)")
    waitFor(function()return util.State()~="Idle" or insertedGlass()==0 end,60,active)
   end
-  while active() and util.State()=="Idle" and conductor do
-   local needed=missingGlass()
+  local function glassCount()
    local inventory=profile().GearInventory
-   if needed<=0 or not inventory or (inventory[util.GearId] or 0)<needed then break end
-   local function idle()
-    return active() and util.State()=="Idle"
+   return inventory and inventory[util.GearId] or 0
+  end
+  local function idle()
+   return active() and util.State()=="Idle"
+  end
+  local function tryInsert(attempt,needed,stock)
+   local function changed()
+    return util.State()~="Idle" or missingGlass()~=needed or glassCount()<stock
    end
+   if changed() then return true end
    local prompt
    if not waitFor(function()
     prompt=conductor:FindFirstChild("InsertPrompt")
     return prompt and prompt:IsA("ProximityPrompt")
-   end,5,idle) then
-    if idle() then error("Prompt d’insertion introuvable",0) end
-    break
-   end
+   end,5,idle) then return false,"prompt d’insertion introuvable" end
    local point=promptPosition(prompt)
    local _,_,root=getCharacterParts()
-   if not point or not root then break end
+   if not point or not root then return false,"position du conducteur indisponible" end
    local reach=rush.Flags.ConductorReach:Get()
    local nativeReach=math.min(reach,prompt.MaxActivationDistance)
    local brakeDistance=math.max(nativeReach-3,nativeReach*.65)
    local function withinApproach(position)
     return (position-point).Magnitude<=brakeDistance
    end
-   setStatus("Storm Rush · approche du conducteur")
-   if not withinApproach(root.Position) then
-    rush.MoveValid=idle
+   setStatus(("Storm Rush · approche du conducteur (%d/3)"):format(attempt))
+   rush.MoveValid=idle
+   if attempt>1 then
+    local flat=(root.Position-point)*Vector3.new(1,0,1)
+    local direction=flat.Magnitude>.1 and flat.Unit or Vector3.new(0,0,1)
+    local angle=math.rad(attempt==2 and 35 or -70)
+    direction=CFrame.fromAxisAngle(Vector3.yAxis,angle):VectorToWorldSpace(direction)
+    local offset=direction*math.min(nativeReach*.5,6)
+    local destination=Vector3.new(point.X,root.Position.Y,point.Z)+offset
+    FusionModules.Helpers.PathMove(destination,token,true)
+   elseif not withinApproach(root.Position) then
     moveActivity(point,token,true,nil,withinApproach)
-    rush.MoveValid=nil
    end
-   if not idle() then break end
+   rush.MoveValid=nil
+   if changed() then return true end
+   if not idle() then return false,"activité interrompue" end
    stopMovement(true)
    RunService.Heartbeat:Wait()
    if (root.Position-point).Magnitude>nativeReach then
-    error(("Conducteur à %.1f studs, portée du prompt %.1f"):format((root.Position-point).Magnitude,nativeReach),0)
+    return false,("conducteur à %.1f studs, portée %.1f"):format((root.Position-point).Magnitude,nativeReach)
    end
-   setStatus("Storm Rush · équipement du Stormglass")
    if not waitFor(function()return equipGlass(character,humanoid)end,3,idle) then
-    if idle() then error("Stormglass non équipé",0) end
-    break
+    return false,"Stormglass non équipé"
    end
    local function canInsert()
     return idle() and prompt.Enabled and prompt:IsDescendantOf(Workspace)
      and (root.Position-point).Magnitude<=nativeReach
    end
-   if not waitFor(canInsert,3,idle) then
-    if idle() then error("Prompt d’insertion non disponible après l’arrêt",0) end
-    break
-   end
-   if missingGlass()~=needed then continue end
-   setStatus("Storm Rush · insertion du Stormglass")
+   if not waitFor(canInsert,3,idle) then return false,"prompt non disponible après l’arrêt" end
+   if changed() then return true end
+   setStatus(("Storm Rush · insertion du Stormglass (%d/3)"):format(attempt))
    local promptReach=math.max(reach,prompt.MaxActivationDistance+4)
    local activated,reason=executorTools.WithPromptReach(prompt,promptReach,function()
     local fired,detail=executorTools.FirePrompt(prompt)
-    if not fired and canInsert() and missingGlass()==needed then
+    if not fired and canInsert() and not changed() then
      return executorTools.ActivateNativePrompt(prompt)
     end
     return fired,detail
    end)
-   if not activated then
-    if active() then error("Prompt d’insertion : "..tostring(reason),0) end
+   if not activated then return false,"activation du prompt : "..tostring(reason) end
+   if waitFor(changed,4,active) then return true end
+   return false,"insertion non confirmée par le jeu"
+  end
+  while idle() and conductor do
+   local needed,stock=missingGlass(),glassCount()
+   if needed<=0 or stock<needed then break end
+   local confirmed,reason
+   for attempt=1,3 do
+    if not idle() then break end
+    confirmed,reason=tryInsert(attempt,needed,stock)
+    if confirmed then break end
+   end
+   if not confirmed then
+    if idle() then
+     setStatus("Storm Rush · insertion abandonnée : "..tostring(reason))
+     log("ERROR","Storm Rush : %s",tostring(reason))
+    end
     break
    end
-   if not waitFor(function()return util.State()~="Idle" or missingGlass()<needed end,4,active) then
-    if active() then error("Insertion du Stormglass non confirmée par le jeu",0) end
-    break
+   -- Stock can replicate before the shared counter. Wait before another deposit.
+   if idle() and missingGlass()==needed and glassCount()<stock then
+    if not waitFor(function()return not idle() or missingGlass()~=needed end,4,active) then break end
    end
   end
   if util.State()=="Charging" or util.State()=="Rush" then
