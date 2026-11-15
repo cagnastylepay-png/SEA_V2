@@ -3649,12 +3649,39 @@ function FusionModules.Butterflies.Idle(token)
  autoActivity="BUTTERFLIES"
  log("BUTTERFLY","Centre rejoint : filet equipe jusqu'au prochain cycle")
  log("ACTION","Collecte des papillons en cours")
- setStatus("Papillons : filet equipe jusqu'au prochain cycle d'oeufs.")
+ local loaded,swarm,flags,remote=pcall(function()
+  local bloom=ReplicatedStorage.Controllers.Game.AdminAbuseClientController.Events.ButterflyBloom
+  return require(bloom.Swarm),require(ReplicatedStorage.Shared.Flags.ButterflyFlags),require(ReplicatedStorage.Shared.Remotes).Butterflies.AskSwing
+ end)
+ local sent={}
+ local priority={Golden=4,Purple=3,Blue=2,Green=1}
+ local nextSwingAt=0
+ setStatus("Papillons · collecte au filet")
  while FusionModules.Options.AutoPapillon and activityValid(token,character) and automaticMode and not stopAfterFlight
   and b.Revision==revision and Workspace:GetServerTimeNow()<b.Until and not FusionModules.Skyfall.Available() and not FusionModules.Helpers.FishingMode() and not FusionModules.SlickRick.Available() do
   local present,net=b.Available(true)
   if not present then break end
   if net.Parent~=character then humanoid:EquipTool(net) end
+  if loaded and net.Parent==character and os.clock()>=nextSwingAt then
+   local reach=flags.NetReach:Get()
+   local target,bestPriority,bestDistance
+   for _,butterfly in pairs(swarm.Each()) do
+    local flight=butterfly.Flight
+    if flight and flight.Id and not sent[flight.Id] and butterfly.Alpha>=.5 then
+     local distance=(root.Position-butterfly.Position).Magnitude
+     local rank=priority[flight.Tier] or 1
+     if distance<=reach and (not target or rank>bestPriority or (rank==bestPriority and distance<bestDistance)) then
+      target,bestPriority,bestDistance=flight,rank,distance
+     end
+    end
+   end
+   if target then
+    sent[target.Id]=true
+    nextSwingAt=os.clock()+1
+    local ok,reason=pcall(function()return remote:InvokeServer(target.Id)end)
+    if not ok then log("BUTTERFLY","Capture : %s",tostring(reason)) end
+   end
+  end
   task.wait(CONFIG.ScanInterval)
  end
  log("ACTION","Collecte des papillons terminee")
