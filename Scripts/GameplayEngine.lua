@@ -3968,6 +3968,13 @@ function FusionModules.StormRush.Bind(remotes)
  rush.Util=require(ReplicatedStorage.Shared.Util.StormheartCave)
  rush.Flags=require(ReplicatedStorage.Shared.Flags.StormheartCaveFlags)
  rush.Remotes=remotes.StormheartCave
+ local prompts=game:GetService("ProximityPromptService")
+ connect(prompts.PromptShown,function(prompt)
+  if rush.IsEntrancePrompt(prompt) then rush.VisibleEntrance=prompt end
+ end)
+ connect(prompts.PromptHidden,function(prompt)
+  if rush.VisibleEntrance==prompt then rush.VisibleEntrance=nil end
+ end)
  connect(rush.Remotes.Rush.OnClientEvent,function(action,payload)
   if action=="Begin" and type(payload)=="table" and type(payload.EndsAt)=="number" then
    rush.Round=payload
@@ -4002,7 +4009,11 @@ do
   local cost=Workspace:GetAttribute(attrs.Cost) or rush.Flags.ActivationCost:Get()
   return math.max(0,cost-insertedGlass())
  end
- local function entrance()
+ function rush.IsEntrancePrompt(prompt)
+  return prompt:IsA("ProximityPrompt")
+   and (prompt.Name=="StormheartCaveEnterPrompt" or prompt.ObjectText=="Stormheart Cave")
+ end
+ local function entrance(searchLoaded)
   local node=Workspace
   for _,name in ipairs({"World","Build","Props","Zone8.5Props","Folder","StormheartCaveMouth","EnterZone"}) do
    node=node:FindFirstChild(name)
@@ -4019,7 +4030,29 @@ do
    point=rush.EntrancePosition
    if not point and game.PlaceId==80978566387592 then point=Vector3.new(3055,72,-426) end
   end
-  return prompt and prompt:IsA("ProximityPrompt") and prompt or nil,point
+  local visible=rush.VisibleEntrance
+  if visible and visible.Enabled and visible:IsDescendantOf(Workspace) then return visible,point end
+  if rush.CachedEntrance and rush.CachedEntrance.Enabled and rush.CachedEntrance:IsDescendantOf(Workspace) then
+   return rush.CachedEntrance,point
+  end
+  if prompt and rush.IsEntrancePrompt(prompt) and prompt.Enabled then return prompt,point end
+  for _,candidate in ipairs(node and node:GetDescendants() or {}) do
+   if rush.IsEntrancePrompt(candidate) and candidate.Enabled then return candidate,point end
+  end
+  if searchLoaded then
+   local _,_,root=getCharacterParts()
+   for _,candidate in ipairs(Workspace:GetDescendants()) do
+    if root and rush.IsEntrancePrompt(candidate) and candidate.Enabled then
+     local parent=candidate.Parent
+     local position=parent and (parent:IsA("Attachment") and parent.WorldPosition or parent:IsA("BasePart") and parent.Position)
+     if position and (root.Position-position).Magnitude<=candidate.MaxActivationDistance then
+      rush.CachedEntrance=candidate
+      return candidate,position
+     end
+    end
+   end
+  end
+  return prompt and rush.IsEntrancePrompt(prompt) and prompt or nil,point
  end
  local function waitFor(test,seconds,valid)
   local deadline=os.clock()+seconds
@@ -4202,18 +4235,30 @@ do
    if distance>reach then
     error(("Entrée Storm Cave à %.1f studs, portée %.1f (%s)"):format(distance,reach,tostring(detail or "approche incomplète")),0)
    end
-   local prompt
+   local prompt=entrance(true)
    setStatus("Storm Rush · attente du prompt d’entrée")
-   if not waitFor(function()
+   if not (prompt and prompt.Enabled) and not waitFor(function()
     prompt=entrance()
     return prompt and prompt.Enabled
    end,6,active) then
     if active() then error("Prompt Storm Cave indisponible près de l’entrée",0) end
     return
    end
+   setStatus("Storm Rush · activation du prompt Entrer")
    if not press(prompt,token,active) then
-    if active() then error("Prompt Storm Cave non déclenché",0) end
-    return
+    if not active() then return end
+    local _,_,currentRoot=getCharacterParts()
+    local promptPoint=promptPosition(prompt)
+    if not currentRoot or not promptPoint or not prompt.Enabled or not prompt:IsDescendantOf(Workspace)
+     or (currentRoot.Position-promptPoint).Magnitude>prompt.MaxActivationDistance then
+     error("Prompt Storm Cave hors de portée",0)
+    end
+    local ok,reason=pcall(function()
+     prompt:InputHoldBegin()
+     task.wait(math.max(prompt.HoldDuration,.05))
+     prompt:InputHoldEnd()
+    end)
+    if not ok then error("Prompt Storm Cave non déclenché : "..tostring(reason),0) end
    end
    -- Let the native trip settle even if a higher-priority activity arrives.
    if not waitFor(rush.Inside,10,function()return activityValid(token,character)end) then
