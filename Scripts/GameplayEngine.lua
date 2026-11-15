@@ -4007,7 +4007,9 @@ do
   local anchor=node and node:FindFirstChild("StormheartCaveEnterPrompt")
   local prompt=anchor and anchor:FindFirstChild("StormheartCaveEnterPrompt")
   local point=anchor and anchor:IsA("Attachment") and anchor.WorldPosition
-  if not point and node and node:IsA("BasePart") then point=node.Position end
+  if not point and node and node:IsA("BasePart") then
+   point=rush.EntrancePosition or node.CFrame:PointToWorldSpace(Vector3.new(0,-4,-6))
+  end
   if point then rush.EntrancePosition=point end
   if not point then
    point=rush.EntrancePosition
@@ -4180,9 +4182,21 @@ do
     if active() then error("Approche Storm Cave : "..tostring(reason),0) end
     return
    end
-   if not approach(point,math.min(6,rush.Flags.EnterReach:Get()),token,active) then
-    if active() then error("Entrée Storm Cave hors de portée",0) end
-    return
+   local _,_,root=getCharacterParts()
+   local reach=rush.Flags.EnterReach:Get()
+   if not point or not root then return end
+   -- The prompt sits inside the mouth. Approach it from the exterior path.
+   local outside=point+Vector3.new(0,-4,7)
+   rush.MoveValid=active
+   local reached,detail=moveActivity(outside,token,false)
+   if active() and (not reached or (root.Position-point).Magnitude>reach) then
+    reached,detail=FusionModules.Helpers.PathMove(outside,token,true)
+   end
+   rush.MoveValid=nil
+   if not active() then return end
+   local distance=(root.Position-point).Magnitude
+   if distance>reach then
+    error(("Entrée Storm Cave à %.1f studs, portée %.1f (%s)"):format(distance,reach,tostring(detail or "approche incomplète")),0)
    end
    local prompt
    setStatus("Storm Rush · attente du prompt d’entrée")
@@ -4206,9 +4220,9 @@ do
   local map
   if not waitFor(function()map=util.LoadedMap();return map~=nil end,5,active) then return end
   local conductor=util.Marker(map,util.Markers.Conductor)
-  if conductor and util.State()=="Idle" and active() then
+  if conductor and util.State()=="Idle" and insertedGlass()>0 and active() then
    setStatus("Storm Rush · attente de l’activation (60 s)")
-   waitFor(function()return util.State()~="Idle"end,60,active)
+   waitFor(function()return util.State()~="Idle" or insertedGlass()==0 end,60,active)
   end
   while active() and util.State()=="Idle" and conductor do
    local needed=missingGlass()
