@@ -635,6 +635,7 @@ return function(ctx)
    end
    assert(#images<=5000,"Catalogue trop volumineux");table.sort(images,function(a,b)return a.category<b.category end);A.ImageCatalog=images;A.Signature=nil;return true
   elseif m.action=="settings.update"then
+   assert(m.settingsSessionId==nil or ctx.Report.SessionId==m.settingsSessionId,"La session des paramètres a changé")
    assert((ctx.CanUpdateSettings and ctx.CanUpdateSettings(m.settingsRevision))or(not ctx.CanUpdateSettings and ctx.Report.SettingsRevision==m.settingsRevision),"Parametres modifies dans le jeu")
    assert(ctx.SetOptions(m.options),"Parametres invalides");return true
   elseif m.action=="fishing.set"then return A.SetFishing(m.enabled)
