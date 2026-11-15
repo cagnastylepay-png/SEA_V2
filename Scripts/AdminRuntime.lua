@@ -215,7 +215,7 @@ return function(ctx)
   local income=metric(safe(A.Items.ProfileIncomePerSecond,player,p))
   local offline=A.Constants.OFFLINE_ASSETS or{}
   local duration,multiplier=metric(offline.MAX_DURATION_SECONDS),metric(offline.MONEY_RATE_MULTIPLIER)
-  return {fishingCapture=A.FishingCapture,fishingEnabled=not ctx.LocalOnly and A.Fishing==true,eggs=eggs,animals=animals,imageCatalog=A.ImageCatalog,automationStatus=ctx.GetStatus and tostring(ctx.GetStatus()):sub(1,500)or nil,mutationConsumables=mutationMetadata(),mutationStatus=A.MutationStatus,stats={money=metric(p.Money),speedPower=metric(safe(A.Speed.ReadProjected))or metric(p.SpeedPower),
+  return {fishingCapture=A.FishingCapture,fishingEnabled=not ctx.LocalOnly and A.Fishing==true,automationEnabled=ctx.IsEnabled(),eggs=eggs,animals=animals,imageCatalog=A.ImageCatalog,automationStatus=ctx.GetStatus and tostring(ctx.GetStatus()):sub(1,500)or nil,mutationConsumables=mutationMetadata(),mutationStatus=A.MutationStatus,stats={money=metric(p.Money),speedPower=metric(safe(A.Speed.ReadProjected))or metric(p.SpeedPower),
    incomePerSecond=income,offlinePerDay=income and duration and multiplier and income*duration*multiplier,
    offlineDurationSeconds=duration,offlineRateMultiplier=multiplier}}
  end
@@ -635,14 +635,14 @@ return function(ctx)
    end
    assert(#images<=5000,"Catalogue trop volumineux");table.sort(images,function(a,b)return a.category<b.category end);A.ImageCatalog=images;A.Signature=nil;return true
   elseif m.action=="settings.update"then
-   assert(ctx.Report.SettingsRevision==m.settingsRevision,"Parametres modifies dans le jeu")
+   assert((ctx.CanUpdateSettings and ctx.CanUpdateSettings(m.settingsRevision))or(not ctx.CanUpdateSettings and ctx.Report.SettingsRevision==m.settingsRevision),"Parametres modifies dans le jeu")
    assert(ctx.SetOptions(m.options),"Parametres invalides");return true
   elseif m.action=="fishing.set"then return A.SetFishing(m.enabled)
   elseif m.action=="automation.set"then
    assert(type(m.enabled)=="boolean","Valeur AUTO invalide")
    if A.Fishing and not m.enabled then stopFishing()
    elseif A.Fishing then assert(A.FishingAutomatic,"Arrête AutoFishing avant de démarrer AUTO") end
-   ctx.SetEnabled(m.enabled)
+   assert(ctx.SetEnabled(m.enabled)==m.enabled and ctx.IsEnabled()==m.enabled,"État AUTO non appliqué")
    return true
   end
   assert(not A.Fishing,"Arrête AutoFishing avant cette action")
@@ -695,7 +695,7 @@ return function(ctx)
    if inventoryAction and ctx.EndManual then ctx.EndManual()end
    local result={version=1,type="admin.command.result",requestId=m.requestId,
     status=ok and confirmed and"confirmed"or(A.Dispatched and"unknown"or"rejected"),
-    message=ok and confirmed and(m.action=="egg.mutate"and A.MutationStatus or"Action confirmee par le jeu")or tostring(ok and"Confirmation en attente : aucune relance automatique"or confirmed):sub(1,500)}
+    message=ok and confirmed and(m.action=="egg.mutate"and A.MutationStatus or m.action=="automation.set"and (m.enabled and "AUTO activé" or "Arrêt AUTO confirmé") or"Action confirmee par le jeu")or tostring(ok and"Confirmation en attente : aucune relance automatique"or confirmed):sub(1,500)}
    A.Seen[m.requestId]=result;A.SeenOrder=A.SeenOrder or{};table.insert(A.SeenOrder,m.requestId)
    if #A.SeenOrder>100 then A.Seen[table.remove(A.SeenOrder,1)]=nil end
    A.Busy=false;if shared.__SEAAdminRequestLock==lock then shared.__SEAAdminRequestLock=nil end
