@@ -2516,9 +2516,10 @@ local function activityValid(token, character)
 		and player.Character == character
 end
 
-local function moveActivity(destination, token, interruptForEgg, nextDestination, stopWithin)
+local function moveActivity(destination, token, interruptForEgg, nextDestination, stopWithin, arrivalRadius)
 	local character, humanoid, root = getCharacterParts()
 	if not character or not humanoid or not root then return false, "personnage absent" end
+	local radius = arrivalRadius or 3
 	local started = os.clock()
 	local deadline = started + math.clamp(distanceXZ(root.Position, destination) / math.max(humanoid.WalkSpeed, 1) * 3 + 5, 8, 30)
 	local previous = root.Position
@@ -2568,8 +2569,8 @@ local function moveActivity(destination, token, interruptForEgg, nextDestination
 			return true
 		end
 		local distance = distanceXZ(current, destination)
-		if distance <= 3 then
-			move(destination, {Radius = 3})
+		if distance <= radius then
+			move(destination, {Radius = radius})
 			log("ACTIVITY_ARRIVED", "Activite=%s Distance=%.2f DureeMs=%.1f", autoActivity, distance, (now-started)*1000)
 			if typeof(nextDestination) == "Vector3" then
 				move(nextDestination, {Radius = CONFIG.PreciseArrivalRadius})
@@ -2583,14 +2584,14 @@ local function moveActivity(destination, token, interruptForEgg, nextDestination
 			local offset = Vector3.new(destination.X-previous.X,0,destination.Z-previous.Z)
 			if segment.Magnitude > 0.01 then
 				local projection = offset:Dot(segment)/segment:Dot(segment)
-				if projection > 0 and projection < 1 and (offset-segment*projection).Magnitude <= 3 then
+				if projection > 0 and projection < 1 and (offset-segment*projection).Magnitude <= radius then
 					stopMovement(true)
 					nextCommand = 0
 					log("ACTIVITY_OVERSHOOT_BRAKE", "Activite=%s Distance=%.2f : depassement freine", autoActivity, distance)
 				end
 			end
 			if distance < 100 or now >= nextCommand then
-				move(destination, {Radius = 3})
+				move(destination, {Radius = radius})
 				nextCommand = now + CONFIG.MoveRefresh
 			end
 		end
@@ -4430,8 +4431,16 @@ do
   local price=rush.Flags.SparkTradePrice:Get()
   if active() and price>0 and sparks()>=price and sparks()~=rush.UncertainBalance and rumble then
    local point=talk and promptPosition(talk) or rumble:GetPivot().Position
-   if not approach(point,rush.Flags.RumbleReach:Get(),token,active) then return end
-   while active() and sparks()>=price and sparks()~=rush.UncertainBalance do
+   local reach=rush.Flags.RumbleReach:Get()
+   if talk and talk:IsA("ProximityPrompt") then reach=math.min(reach,talk.MaxActivationDistance) end
+   if not approach(point,math.max(reach-3,reach*.65),token,active) then return end
+   stopMovement(true)
+   RunService.Heartbeat:Wait()
+   local function atRumble()
+    local _,_,root=getCharacterParts()
+    return rush.Inside() and root and (root.Position-point).Magnitude<=reach
+   end
+   while active() and atRumble() and sparks()>=price and sparks()~=rush.UncertainBalance do
     local balance=sparks()
     setStatus("Storm Rush · échange chez Rumble")
     local ok,traded=pcall(function()return rush.Remotes.Trade:InvokeServer()end)
@@ -4472,7 +4481,13 @@ do
  local function entrance()
   local map=markers()
   local trigger=map and map:FindFirstChild("EnterTrigger")
-  return trigger and trigger:FindFirstChild("EnchantedTreePrompt",true)
+  local tree=findPath("World","Build","EnchantedForestZone","Zone13Props","EnchantedTree")
+  local anchor=trigger and trigger:FindFirstChild("EnchantedTreeEntrance")
+  local prompt=(trigger and trigger:FindFirstChild("EnchantedTreePrompt",true))
+   or (tree and tree:FindFirstChild("EnchantedTreePrompt",true))
+  local point=anchor and anchor:IsA("Attachment") and anchor.WorldPosition
+  if not point and game.PlaceId==80978566387592 then point=Vector3.new(7408.9,71,-311) end
+  return prompt,point
  end
  local function machine()
   return findPath("World","Machines","ButterflyStation","ButterflyMachine","Anchor","ProximityPrompt")
@@ -4504,8 +4519,8 @@ do
   end
   if not trade.Flags.Enabled:Get() then return false end
   if not trade.Inside() then
-   local prompt=entrance()
-   if not prompt or not prompt.Enabled then return false end
+   local prompt,point=entrance()
+   if not prompt and not point then return false end
   end
   return recipe()~=nil
  end
@@ -4523,16 +4538,28 @@ do
   if parent and parent:IsA("Attachment") then return parent.WorldPosition end
   if parent and parent:IsA("BasePart") then return parent.Position end
  end
+ local function reachPoint(position,token,active)
+  local _,_,root=getCharacterParts()
+  if not root or not position or not active() then return false,"position du prompt indisponible" end
+  if distanceXZ(root.Position,position)>6 then
+   local reached,reason=FusionModules.Helpers.PathMove(position,token,true)
+   if not reached and distanceXZ(root.Position,position)>6 then return false,reason end
+  end
+  if not active() then return false,"trajet interrompu" end
+  local reached,reason=moveActivity(position,token,true,nil,nil,1.25)
+  if not reached then return false,reason end
+  stopMovement(true)
+  RunService.Heartbeat:Wait()
+  if not active() or distanceXZ(root.Position,position)>1.5 then return false,"arrêt devant le prompt non confirmé" end
+  return true
+ end
  local function activate(prompt,token,active,isEntrance)
   local position=promptPosition(prompt)
+  local reached,reason=reachPoint(position,token,active)
+  if not reached then return false,reason end
   local _,_,root=getCharacterParts()
-  if not root or not position or not prompt.Enabled or not active() then return false end
-  if (root.Position-position).Magnitude>prompt.MaxActivationDistance then
-   local arrived=moveActivity(position,token,true)
-   if not arrived then return false end
-  end
-  if not active() or not prompt.Enabled or (root.Position-position).Magnitude>prompt.MaxActivationDistance then return false end
-  stopMovement(true)
+  if not root or not prompt.Enabled or not prompt:IsDescendantOf(Workspace)
+   or (root.Position-position).Magnitude>prompt.MaxActivationDistance then return false,"prompt hors de portée ou désactivé" end
   if isEntrance then
    return executorTools.WithPromptReach(prompt,prompt.MaxActivationDistance+4,function()
     return executorTools.FirePrompt(prompt) or executorTools.ActivateNativePrompt(prompt)
@@ -4565,17 +4592,46 @@ do
   trade.MoveValid=active
   trade.Managed=true
   if not trade.Inside() then
-   local prompt=entrance()
-   local point=promptPosition(prompt)
+   local prompt,point=entrance()
+   point=promptPosition(prompt) or point
    setStatus("Papillons · trajet vers l’Arbre enchanté")
-   if not point or not FusionModules.Helpers.DepartSafe(token,active,isSafe(point)==false) or not activate(prompt,token,active,true) then return end
-   if not waitFor(trade.Inside,10,function()return activityValid(token,character)end) then return end
+   if not point then error("Coordonnées de l’entrée de l’Arbre enchanté indisponibles",0) end
+   local departed,departureReason=FusionModules.Helpers.DepartSafe(token,active,isSafe(point)==false)
+   if not departed then
+    if active() then error("Arbre enchanté : "..tostring(departureReason),0) end
+    return
+   end
+   local reached,reason=reachPoint(point,token,active)
+   if not reached then
+    if active() then error("Arbre enchanté : "..tostring(reason),0) end
+    return
+   end
+   if not waitFor(function()
+    prompt=entrance()
+    return prompt and prompt:IsA("ProximityPrompt") and prompt.Enabled
+   end,6,active) then
+    if active() then error("Prompt Entrer indisponible au point d’approche",0) end
+    return
+   end
+   local fired,detail=activate(prompt,token,active,true)
+   if not fired then
+    if active() then error("Arbre enchanté : "..tostring(detail),0) end
+    return
+   end
+   if not waitFor(trade.Inside,10,function()return activityValid(token,character)end) then
+    if active() then error("Entrée dans l’Arbre enchanté non confirmée",0) end
+    return
+   end
   end
   local prompt
   if not waitFor(function()prompt=machine();return prompt~=nil end,5,active) then return end
   local tabs=require(ReplicatedStorage.Client.Tabs)
   setStatus("Papillons · trajet vers la machine d’échange")
-  if not activate(prompt,token,active) then return end
+  local opened,reason=activate(prompt,token,active)
+  if not opened then
+   if active() then error("Machine à papillons : "..tostring(reason),0) end
+   return
+  end
   trade.Tabs=tabs
   if not waitFor(function()return tabs.IsActive("ButterflyMachine")end,4,active) then return end
   local remote=require(ReplicatedStorage.Shared.Remotes).Butterflies.AskTradeUp
@@ -4811,6 +4867,15 @@ local function idleOnTreadmill(token)
  if not FusionModules.Options.AutoTreadmill then
   if treadmillAssigned then leaveTreadmill(token)end
   autoActivity="IDLE";setStatus("En attente : AutoTreadmill OFF");task.wait(CONFIG.ScanInterval);return true
+ end
+ local _,_,returnRoot=getCharacterParts()
+ if returnRoot and isSafe(returnRoot.Position)==false then
+  local home,why=getStartAreaDestination()
+  if not home then return false,why end
+  autoActivity="RETURN_SAFE"
+  setStatus("Retour direct vers la zone sûre...")
+  local reached,reason=moveActivity(home,token,true)
+  if not reached then return reason=="nouvel oeuf",reason end
  end
 	if not PlotState or not TreadmillRemotes then return false, "modules tapis indisponibles" end
 	local slot = PlotState.ResolveLocalSlot()
