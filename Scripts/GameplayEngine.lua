@@ -3745,12 +3745,15 @@ end
 function FusionModules.Skyfall.SelectRock(rocks,position,skipped,infusedOnly)
  local tags=FusionModules.Skyfall.Tags
  local target,nearest,bestInfused
+ local now=os.clock()
  for _,rock in ipairs(rocks:GetChildren())do
   local health=rock:GetAttribute("Health")
   if rock:IsA("BasePart") and type(health)=="number" and health>0
-   and tags:HasTag(rock,"BatAutoSwing") and not skipped[rock] then
+   and tags:HasTag(rock,"BatAutoSwing") then
    local infused=FusionModules.Skyfall.IsInfused(rock)
-   if not infusedOnly or infused then
+   local retry=skipped[rock]
+   local eligible=not retry or retry.Infused~=infused or now>=retry.Until
+   if eligible and (not infusedOnly or infused) then
     local distance=distanceXZ(position,rock.Position)
     if not target or (infused and not bestInfused) or (infused==bestInfused and distance<nearest) then
      target,nearest,bestInfused=rock,distance,infused
@@ -3955,9 +3958,11 @@ function FusionModules.Skyfall.Run(token)
     if previous and previous~=bat and backpack and previous.Parent==character then previous.Parent=backpack end
     sky.EquippedBat=bat
    end
-   setStatus("Skyfall · trajet vers "..target.Name)
+   setStatus("Skyfall · trajet vers "..(sky.IsInfused(target) and "un rocher infusé" or target.Name))
    local function targetActive()
-    if not active() or target.Parent~=rocks or not sky.Tags:HasTag(target,"BatAutoSwing") then return false end
+    local health=target:GetAttribute("Health")
+    if not active() or target.Parent~=rocks or type(health)~="number" or health<=0
+     or not sky.Tags:HasTag(target,"BatAutoSwing") then return false end
     return sky.IsInfused(target)
      or not sky.SelectRock(rocks,root.Position,skipped,true)
    end
@@ -3965,7 +3970,11 @@ function FusionModules.Skyfall.Run(token)
    local point=target.Position
    if not departed then
     departed=FusionModules.Helpers.DepartSafe(token,targetActive,isSafe(point)==false)
-    if not departed then sky.MoveValid=nil;return end
+    if not departed then
+     sky.MoveValid=nil
+     if active() and not targetActive() then continue end
+     return
+    end
    end
    local reached=moveActivity(Vector3.new(point.X,root.Position.Y,point.Z),token,true)
    sky.MoveValid=nil
@@ -3985,11 +3994,12 @@ function FusionModules.Skyfall.Run(token)
      task.wait(CONFIG.ScanInterval)
     end
    end
-   if targetActive() then skipped[target]=true end
+   if targetActive() then
+    skipped[target]={Infused=sky.IsInfused(target),Until=os.clock()+2}
+   end
   else
    setStatus("Skyfall · attente d’un rocher disponible")
    task.wait(.5)
-   table.clear(skipped)
   end
  end
 end
