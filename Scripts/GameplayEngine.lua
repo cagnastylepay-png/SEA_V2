@@ -290,6 +290,16 @@ function executorTools.FirePrompt(prompt)
 	end
 	return callExecutor("fireproximityprompt", prompt)
 end
+function executorTools.ActivateNativePrompt(prompt)
+ if typeof(prompt)~="Instance" or not prompt:IsA("ProximityPrompt")
+  or not prompt.Enabled or not prompt:IsDescendantOf(Workspace) then
+  return false,"prompt indisponible"
+ end
+ local began,reason=pcall(function()prompt:InputHoldBegin()end)
+ if not began then return false,reason end
+ task.wait(math.max(prompt.HoldDuration,.05))
+ return pcall(function()prompt:InputHoldEnd()end)
+end
 shared.__AutoSAEExecutorTools = executorTools
 
 executorTools.RemoteLogQueue={}
@@ -4245,23 +4255,24 @@ do
     return
    end
    setStatus("Storm Rush · activation du prompt Entrer")
-   if not press(prompt,token,active) then
-    if not active() then return end
+   local function inReach()
     local _,_,currentRoot=getCharacterParts()
     local promptPoint=promptPosition(prompt)
-    if not currentRoot or not promptPoint or not prompt.Enabled or not prompt:IsDescendantOf(Workspace)
-     or (currentRoot.Position-promptPoint).Magnitude>prompt.MaxActivationDistance then
-     error("Prompt Storm Cave hors de portée",0)
-    end
-    local ok,reason=pcall(function()
-     prompt:InputHoldBegin()
-     task.wait(math.max(prompt.HoldDuration,.05))
-     prompt:InputHoldEnd()
-    end)
-    if not ok then error("Prompt Storm Cave non déclenché : "..tostring(reason),0) end
+    return active() and currentRoot and promptPoint and prompt.Enabled and prompt:IsDescendantOf(Workspace)
+     and (currentRoot.Position-promptPoint).Magnitude<=prompt.MaxActivationDistance
    end
-   -- Let the native trip settle even if a higher-priority activity arrives.
-   if not waitFor(rush.Inside,10,function()return activityValid(token,character)end) then
+   if not approach(promptPosition(prompt),prompt.MaxActivationDistance,token,active) or not inReach() then
+    if active() then error("Prompt Storm Cave hors de portée",0) end
+    return
+   end
+   local function sameCharacter()return activityValid(token,character)end
+   local activated=executorTools.ActivateNativePrompt(prompt)
+   local entered=activated and waitFor(rush.Inside,5,sameCharacter)
+   if not entered and inReach() and not rush.Inside() then
+    executorTools.FirePrompt(prompt)
+    entered=waitFor(rush.Inside,10,sameCharacter)
+   end
+   if not entered and not rush.Inside() then
     if active() then error("Entrée Storm Cave non confirmée par le jeu",0) end
     return
    end
@@ -4427,8 +4438,9 @@ do
    local arrived=moveActivity(position,token,true)
    if not arrived then return false end
   end
-  return active() and prompt.Enabled and (root.Position-position).Magnitude<=prompt.MaxActivationDistance
-   and executorTools.FirePrompt(prompt)
+  if not active() or not prompt.Enabled or (root.Position-position).Magnitude>prompt.MaxActivationDistance then return false end
+  stopMovement(true)
+  return executorTools.ActivateNativePrompt(prompt) or executorTools.FirePrompt(prompt)
  end
  function trade.Exit(token)
   local map=markers()
