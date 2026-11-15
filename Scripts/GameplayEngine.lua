@@ -4002,9 +4002,18 @@ do
   local node=Workspace
   for _,name in ipairs({"World","Build","Props","Zone8.5Props","Folder","StormheartCaveMouth","EnterZone"}) do
    node=node:FindFirstChild(name)
-   if not node then return nil end
+   if not node then break end
   end
-  return node:FindFirstChildWhichIsA("ProximityPrompt",true)
+  local anchor=node and node:FindFirstChild("StormheartCaveEnterPrompt")
+  local prompt=anchor and anchor:FindFirstChild("StormheartCaveEnterPrompt")
+  local point=anchor and anchor:IsA("Attachment") and anchor.WorldPosition
+  if not point and node and node:IsA("BasePart") then point=node.Position end
+  if point then rush.EntrancePosition=point end
+  if not point then
+   point=rush.EntrancePosition
+   if not point and game.PlaceId==80978566387592 then point=Vector3.new(3055,72,-426) end
+  end
+  return prompt and prompt:IsA("ProximityPrompt") and prompt or nil,point
  end
  local function waitFor(test,seconds,valid)
   local deadline=os.clock()+seconds
@@ -4060,8 +4069,11 @@ do
   local util=rush.Util
   local state=util.State()
   if not rush.Inside() then
-   local prompt=entrance()
-   if not prompt or not prompt.Enabled then return false end
+   local prompt,point=entrance()
+   if not point or (not prompt and not util.Live()) then return false end
+   local required=util.UnlockSpeedPower()
+   local speed=profile().SpeedPower
+   if type(required)=="number" and type(speed)=="number" and speed<required then return false end
   end
   if state=="Charging" or (state=="Rush" and player:GetAttribute(util.Attributes.Eligible)==true) then return true end
   if sparks()>=rush.Flags.SparkTradePrice:Get() and sparks()~=rush.UncertainBalance then return true end
@@ -4160,14 +4172,36 @@ do
   rush.Managed=true
   if not rush.Inside() then
    setStatus("Storm Rush · trajet vers la grotte")
-   local prompt=entrance()
-   local point=prompt and promptPosition(prompt)
+   local _,point=entrance()
    rush.MoveValid=active
-   local departed=point and FusionModules.Helpers.DepartSafe(token,active,isSafe(point)==false)
+   local departed,reason=FusionModules.Helpers.DepartSafe(token,active,point and isSafe(point)==false)
    rush.MoveValid=nil
-   if not departed or not press(prompt,token,active) then return end
+   if not departed then
+    if active() then error("Approche Storm Cave : "..tostring(reason),0) end
+    return
+   end
+   if not approach(point,math.min(6,rush.Flags.EnterReach:Get()),token,active) then
+    if active() then error("Entrée Storm Cave hors de portée",0) end
+    return
+   end
+   local prompt
+   setStatus("Storm Rush · attente du prompt d’entrée")
+   if not waitFor(function()
+    prompt=entrance()
+    return prompt and prompt.Enabled
+   end,6,active) then
+    if active() then error("Prompt Storm Cave indisponible près de l’entrée",0) end
+    return
+   end
+   if not press(prompt,token,active) then
+    if active() then error("Prompt Storm Cave non déclenché",0) end
+    return
+   end
    -- Let the native trip settle even if a higher-priority activity arrives.
-   if not waitFor(rush.Inside,10,function()return activityValid(token,character)end) then return end
+   if not waitFor(rush.Inside,10,function()return activityValid(token,character)end) then
+    if active() then error("Entrée Storm Cave non confirmée par le jeu",0) end
+    return
+   end
   end
   local map
   if not waitFor(function()map=util.LoadedMap();return map~=nil end,5,active) then return end
