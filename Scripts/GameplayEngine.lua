@@ -189,7 +189,7 @@ function FusionModules.Helpers.RestoreOptions(saved)
  if not FusionModules.Helpers.ValidHelpFavorites(candidate.HelpFavorites)then return false end
  for _,id in ipairs({"Boss","Scrambled","Enchanted","Nitro","Spectral","Musical","Alien","DarkMatter","Blacklisted","Copper","Thunderous","GreatBloom"})do local n=candidate["Mutation"..id.."Attempts"];if n%1~=0 or n<1 or n>100 then return false end end
  FusionModules.Options=candidate
- minimumRatePerSecond=candidate.AutoEggsMin;autoIncludeMissingIndex=candidate.AutoIndex;automaticMode=true
+ minimumRatePerSecond=candidate.AutoEggsMin;autoIncludeMissingIndex=candidate.AutoIndex
  return true
 end
 
@@ -331,7 +331,7 @@ local settingsPath = type(shared.__AutoSAEReportingOptions)=="table" and shared.
 local lastSettingsJSON, lastSavedLogSequence = nil, -1
 function executorTools.SaveSettings()
 	local json = HttpService:JSONEncode({
-		Version = 1, Settings = FusionModules.Options, AutomaticMode = true,
+		Version = 1, Settings = FusionModules.Options, AutomaticMode = automaticMode,
 		IncludeMissingIndex = autoIncludeMissingIndex,
 		OpenBelowRate = openBelowRate,
 		SearchActive = false,
@@ -392,7 +392,6 @@ local function loadSettings()
  if type(settings.Settings)=="table"then
   if not FusionModules.Helpers.RestoreOptions(settings.Settings)then warn("[Auto_SAE] Parametres invalides : valeurs migrees conservees")end
  end
- automaticMode=true
  autoIncludeMissingIndex=FusionModules.Options.AutoIndex
 	log("SETTINGS_LOADED", "Auto=%s Index=%s Minimum=%s B/s", tostring(automaticMode), tostring(autoIncludeMissingIndex), tostring(minimumRatePerSecond / 1e9))
 end
@@ -992,6 +991,14 @@ do
    local revision=report.SettingsRevision
    local serial=report.Serial
    local options=table.clone(FusionModules.Options)
+   local previous=report.LastOptions
+   for key,value in pairs(options) do
+    if not previous or previous[key]~=value then
+     report.OptionsChangedRevision=revision
+     report.LastOptions=options
+     break
+    end
+   end
    report.SettingsDirty=false
    report.SettingsPending=revision
    local ok=pcall(function()report.Socket:Send(HttpService:JSONEncode({version=1,type="settings.snapshot",sessionId=report.SessionId,revision=revision,options=options,fishingActive=FusionModules.Helpers.FishingActive(),automationActive=report.AutomationActive(),automationEnabled=automaticMode and not queuePaused and not stopAfterFlight and not destroyed,automationReason=report.AutomationReason(),visitedJobIds=report.VisitedJobs(),missingCategories=report.MissingCategories()}))end)
@@ -5385,7 +5392,7 @@ if FusionModules.Reporting.Headless then
  if old then old:Destroy()end
 end
 local gui = Instance.new("Folder")
-if FusionModules.Reporting.ClientKind=="admin" then automaticMode=true;queuePaused=false;stopAfterFlight=false end
+if FusionModules.Reporting.ClientKind=="admin" then queuePaused=not automaticMode;stopAfterFlight=false end
 setStatus("Chargement des modules du jeu...")
 connect(player.CharacterRemoving, function()
 	stopAutomation("Personnage retire : redemarre depuis la zone sure")
@@ -5458,6 +5465,14 @@ shared.__AutoSAEController = {Destroy = destroy, Gui = gui, Reporting = FusionMo
   MoveForFishing=FusionModules.Helpers.MoveForFishing,
   FishingTravelValid=function()return not destroyed and automaticMode and autoEnabled and not queuePaused and not stopAfterFlight and not serverHopPending end,
   FishingAutomaticValid=function()return not destroyed and automaticMode and autoEnabled and not queuePaused and not stopAfterFlight and not serverHopPending and FusionModules.Helpers.FishingMode() and not FusionModules.SlickRick.Available() and not FusionModules.Skyfall.Available()end,
+  CanUpdateSettings=function(revision)
+   local report=FusionModules.Reporting
+   if type(revision)~="number" or revision>report.SettingsRevision or revision<(report.OptionsChangedRevision or 1) or not report.LastOptions then return false end
+   for key,value in pairs(FusionModules.Options) do
+    if report.LastOptions[key]~=value then return false end
+   end
+   return true
+  end,
   FishingLock=function(value)FusionModules.FishingBusy=value==true;FusionModules.Reporting.MarkSettingsDirty()end,
   CanStartFishing=function()local carry=readCarry();return carry and not carry.IsCarrying and not treadmillPending and not treadmillAssigned and not(inFlightRequest and not inFlightRequest.done) end,
   IsEnabled=function()return automaticMode end,
@@ -5490,6 +5505,7 @@ shared.__AutoSAEController = {Destroy = destroy, Gui = gui, Reporting = FusionMo
    queuePaused=false;stopAfterFlight=false
    if ready then safeHome=getStartAreaDestination();syncQueue();wakeQueue() end
   else requestUserStop("Admin OFF") end
+  executorTools.SaveSettings()
   FusionModules.Reporting.MarkSettingsDirty()
   return automaticMode
  end
