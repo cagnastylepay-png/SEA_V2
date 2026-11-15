@@ -2497,6 +2497,9 @@ local function moveActivity(destination, token, interruptForEgg, nextDestination
   if autoActivity=="SKYFALL" and FusionModules.Skyfall.MoveValid and not FusionModules.Skyfall.MoveValid() then
    stopMovement(true);return false,"Skyfall interrompu"
   end
+  if autoActivity=="TO_BUTTERFLIES" and FusionModules.Butterflies.MoveValid and not FusionModules.Butterflies.MoveValid() then
+   stopMovement(true);return false,"papillons interrompus"
+  end
   if autoActivity=="TO_FISHING"and FusionModules.FishingMoveValid and not FusionModules.FishingMoveValid()then stopMovement(true);return false,"pêche interrompue"end
   if autoActivity=="TO_FARM"and FusionModules.CollectionReturnPending then stopMovement(true);return false,"COLLECTION_STOPPED"end
   if autoActivity=="TO_UPGRADE"and FusionModules.UpgradeMoveValid and not FusionModules.UpgradeMoveValid()then stopMovement(true);return false,"upgrade interrompue : priorite au vol ou option OFF"end
@@ -2514,6 +2517,7 @@ local function moveActivity(destination, token, interruptForEgg, nextDestination
   if autoActivity=="TO_TREADMILL" and FusionModules.SlickRick.Available() then stopMovement(true);return false,"slick rick"end
   if autoActivity=="TO_TREADMILL" and FusionModules.Helpers.FishingMode() then stopMovement(true);return false,"eclipse"end
   if autoActivity=="TO_TREADMILL" and FusionModules.Skyfall.Available() then stopMovement(true);return false,"skyfall"end
+  if autoActivity=="TO_TREADMILL" and FusionModules.Butterflies.Available() then stopMovement(true);return false,"papillons"end
   if autoActivity=="TO_TREADMILL"and not FusionModules.Options.AutoTreadmill then stopMovement(true);return false,"tapis OFF"end
 		if not activityValid(token, character) or humanoid.Health <= 0 then
 			stopMovement()
@@ -2712,7 +2716,7 @@ end
 
 -- Cross the real separator using native walking, then let the local game guard
 -- stay valid across several frames. No position/velocity/attribute writes.
-function FusionModules.Helpers.EnterGameplay(token)
+function FusionModules.Helpers.EnterGameplay(token,active)
  local character,humanoid,root=getCharacterParts()
  local line=getSeparationLine()
  if not line or not root or not humanoid then return false,"ligne ou personnage absent"end
@@ -2726,7 +2730,7 @@ function FusionModules.Helpers.EnterGameplay(token)
   setStatus("Franchissement a pied de l entree gameplay...")
   local nextMove=0
   repeat
-   if not activityValid(token,character)or FusionModules.CollectionReturnPending then return false,"entree annulee"end
+   if not activityValid(token,character)or FusionModules.CollectionReturnPending or (active and not active()) then return false,"entree annulee"end
    if motionBlockReason({character=character})then return false,"personnage immobilise a l entree"end
    if os.clock()>=nextMove then humanoid:MoveTo(destination);nextMove=os.clock()+.2 end
    RunService.Heartbeat:Wait()
@@ -2736,11 +2740,30 @@ function FusionModules.Helpers.EnterGameplay(token)
  end
  local stableUntil=os.clock()+.35
  repeat
-  if not activityValid(token,character)or FusionModules.CollectionReturnPending then return false,"entree annulee"end
+  if not activityValid(token,character)or FusionModules.CollectionReturnPending or (active and not active()) then return false,"entree annulee"end
   local ok,why=FusionModules.Helpers.GameplayEntryAllowed()
   if not ok then return false,why end
   RunService.Heartbeat:Wait()
  until os.clock()>=stableUntil
+ return true
+end
+
+-- Share the safe-zone departure used by egg collection and field activities.
+function FusionModules.Helpers.DepartSafe(token,active,requireGameplay)
+ local character,_,root=getCharacterParts()
+ if not root then return false,"personnage absent" end
+ if active and not active() then return false,"départ annulé" end
+ if isSafe(root.Position)==true then
+  local departure,why=getStartAreaDestination()
+  if not departure then return false,why end
+  if distanceXZ(root.Position,departure)>CONFIG.PreciseArrivalRadius then
+   setStatus("Trajet vers le centre de StartArea...")
+   local reached,reason=measureAction("TRAJET_STARTAREA",FusionModules.Helpers.PathMove,departure,token,active~=nil)
+   if not reached then return false,reason end
+  end
+ end
+ if not activityValid(token,character) or (active and not active()) then return false,"départ annulé" end
+ if requireGameplay then return FusionModules.Helpers.EnterGameplay(token,active) end
  return true
 end
 
@@ -3574,25 +3597,19 @@ function FusionModules.Butterflies.Idle(token)
  local character,humanoid,root=getCharacterParts()
  if not character or not humanoid or not root then return false end
  if tool.Parent~=character then humanoid:EquipTool(tool) end
- local departure,departureReason=getStartAreaDestination()
- if not departure then
-  log("BUTTERFLY","Point de depart indisponible : %s",tostring(departureReason))
-  b.RetryAt=os.clock()+5
-  return false
+ local function active()
+  return activityValid(token,character) and automaticMode and not stopAfterFlight and next(queuedEggs)==nil
+   and b.Revision==revision and b.Available() and not FusionModules.SlickRick.Available()
+   and not FusionModules.Skyfall.Available() and not FusionModules.Helpers.FishingMode()
  end
- autoActivity="TO_BUTTERFLIES_START"
- setStatus("Papillons : trajet vers le centre de StartArea...")
- local nextDestination=Vector3.new(bounds.Position.X,departure.Y,bounds.Position.Z)
- local reached,departureDetail=measureAction("PAPILLONS_STARTAREA",moveActivity,departure,token,false,nextDestination)
- if not reached then
-  log("BUTTERFLY","Trajet StartArea interrompu : %s",tostring(departureDetail))
-  b.RetryAt=os.clock()+5
-  return true
- end
- if not activityValid(token,character)or not automaticMode or stopAfterFlight then return true end
  autoActivity="TO_BUTTERFLIES"
+ b.MoveValid=active
+ local departed,detail=FusionModules.Helpers.DepartSafe(token,active,isSafe(bounds.Position)==false)
+ if not departed then b.MoveValid=nil;b.RetryAt=os.clock()+5;return true end
  setStatus("File vide : trajet vers le centre des papillons...")
- local arrived,detail=moveActivity(Vector3.new(bounds.Position.X,root.Position.Y,bounds.Position.Z),token,false)
+ local arrived
+ arrived,detail=moveActivity(Vector3.new(bounds.Position.X,root.Position.Y,bounds.Position.Z),token,true)
+ b.MoveValid=nil
  if not arrived then
   log("BUTTERFLY","Trajet interrompu : %s",tostring(detail))
   b.RetryAt=os.clock()+5
@@ -3749,7 +3766,8 @@ function FusionModules.SlickRick.Run(token,visit)
  autoActivity="SLICK_RICK"
  market.MoveValid=active
  setStatus("Slick Rick · trajet vers le marché noir")
- local reached=moveActivity(Vector3.new(destination.X,root.Position.Y,destination.Z),token,true)
+ local departed=FusionModules.Helpers.DepartSafe(token,active,isSafe(destination)==false)
+ local reached=departed and moveActivity(Vector3.new(destination.X,root.Position.Y,destination.Z),token,true)
  market.MoveValid=nil
  if not reached or not active() then return end
  stopMovement(true)
@@ -3861,6 +3879,7 @@ function FusionModules.Skyfall.Run(token)
  if not active() then return end
  autoActivity="SKYFALL"
  local skipped={}
+ local departed=false
  while active() do
   local rocks=sky.Rocks()
   if not rocks then break end
@@ -3883,6 +3902,10 @@ function FusionModules.Skyfall.Run(token)
    end
    sky.MoveValid=targetActive
    local point=target.Position
+   if not departed then
+    departed=FusionModules.Helpers.DepartSafe(token,targetActive,isSafe(point)==false)
+    if not departed then sky.MoveValid=nil;return end
+   end
    local reached=moveActivity(Vector3.new(point.X,root.Position.Y,point.Z),token,true)
    sky.MoveValid=nil
    if reached then
@@ -4122,7 +4145,12 @@ do
   rush.Managed=true
   if not rush.Inside() then
    setStatus("Storm Rush · trajet vers la grotte")
-   if not press(entrance(),token,active) then return end
+   local prompt=entrance()
+   local point=prompt and promptPosition(prompt)
+   rush.MoveValid=active
+   local departed=point and FusionModules.Helpers.DepartSafe(token,active,isSafe(point)==false)
+   rush.MoveValid=nil
+   if not departed or not press(prompt,token,active) then return end
    -- Let the native trip settle even if a higher-priority activity arrives.
    if not waitFor(rush.Inside,10,function()return activityValid(token,character)end) then return end
   end
@@ -4236,6 +4264,10 @@ function FusionModules.StormyEgg.Run(token)
   return (root.Position-pedestal.Position).Magnitude<=math.min(prompt.MaxActivationDistance,shop.Flags.GachaReach:Get())
  end
  autoActivity="STORMY_EGG"
+ shop.MoveValid=active
+ local departed=FusionModules.Helpers.DepartSafe(token,active,isSafe(pedestal.Position)==false)
+ shop.MoveValid=nil
+ if not departed then return end
  if not inRange() then
   local offset=Vector3.new(root.Position.X-pedestal.Position.X,0,root.Position.Z-pedestal.Position.Z)
   local approach=offset.Magnitude>0 and offset.Unit*3 or Vector3.zero
@@ -4310,15 +4342,9 @@ function FusionModules.Helpers.MoveForFishing(destination,viaStart,active,usePat
  local token=generation
  autoActivity="TO_FISHING";FusionModules.FishingMoveValid=active
  local ok,reached,detail=pcall(function()
-  -- A resumed client near Ferryman must not pathfind all the way back to
-  -- StartArea. Treadmill exits already reach StartArea in leaveTreadmill.
-  if viaStart and isSafe(root.Position)==true then
-   local departure,why=getStartAreaDestination()
-   if not departure then return false,why or "StartArea indisponible"end
-   if distanceXZ(root.Position,departure)>CONFIG.PreciseArrivalRadius then
-    local arrived,reason=FusionModules.Helpers.PathMove(departure,token,false)
-    if not arrived then return false,"Zone sûre : "..tostring(reason)end
-   end
+  if viaStart then
+   local departed,why=FusionModules.Helpers.DepartSafe(token,active,isSafe(destination)==false)
+   if not departed then return false,why end
   end
   if not active()then return false,"pêche interrompue pendant le trajet"end
   if usePathfinding then return FusionModules.Helpers.PathMove(destination,token,false)end
@@ -4378,7 +4404,7 @@ function FusionModules.Helpers.FishingIdle(token)
   local selected,rate=selectBest()
   if selected then FusionModules.Helpers.RequestFishingEgg(selected,rate)
   elseif FusionModules.RemoteHop.LocalReturnTarget then FusionModules.Helpers.ReturnForFishingEgg()
-  elseif FusionModules.SlickRick.Available() then break
+  elseif FusionModules.SlickRick.Available() or FusionModules.Skyfall.Available() then break
   end
   task.wait(.1)
  end
@@ -4407,17 +4433,19 @@ local function idleOnTreadmill(token)
 	setStatus("File vide : trajet vers le tapis...")
 	if not treadmillAssigned then
 		local _, humanoid = getCharacterParts()
+		if not humanoid then return false,"personnage absent" end
 		local destination = bottom.Position + Vector3.new(0, humanoid.HipHeight + 2, 0)
-		local ok, reason = measureAction("ENTREE_TAPIS", moveActivity, destination, token, true)
+		local ok, reason = FusionModules.Helpers.DepartSafe(token,function()return automaticMode and FusionModules.Options.AutoTreadmill end,false)
+		if ok then ok,reason=measureAction("ENTREE_TAPIS",moveActivity,destination,token,true) end
 		if not ok then
-			if reason == "nouvel oeuf"or reason=="tapis OFF"or reason=="skyfall"or reason=="eclipse"or reason=="slick rick"or reason=="stormy egg"or reason=="storm rush"then return true end
+			if reason == "nouvel oeuf"or reason=="papillons"or reason=="tapis OFF"or reason=="skyfall"or reason=="eclipse"or reason=="slick rick"or reason=="stormy egg"or reason=="storm rush"then return true end
 			return false, reason
 		end
 		-- The normal controller detects entry with its downward raycast.
 		local deadline = os.clock() + 0.35
 		while not treadmillAssigned and autoEnabled and generation == token and os.clock() < deadline
 			and next(queuedEggs) == nil do task.wait(0.1) end
-		if not FusionModules.Options.AutoTreadmill then return true end
+		if not activityValid(token,player.Character) or not FusionModules.Helpers.TreadmillOnly() then return true end
 		if not treadmillAssigned and automaticMode and next(queuedEggs) == nil then
 			local accepted, detail = treadmillRequest(TreadmillRemotes.AskWearStill, token)
 			if not accepted and not treadmillAssigned then return false, tostring(detail or "entree tapis refusee") end
@@ -4441,7 +4469,7 @@ local function idleOnTreadmill(token)
 end
 
 local function requestUserStop(reason)
-	if autoEnabled and (currentCycle ~= nil or autoActivity == "FARM") then
+	if autoEnabled and currentCycle ~= nil then
 		stopAfterFlight = true
         if FusionModules.Reporting then FusionModules.Reporting.MarkSettingsDirty()end
 		setStatus("Arret demande : fin du vol puis pause.")
@@ -4451,6 +4479,11 @@ local function requestUserStop(reason)
 	stopAfterFlight = false
 	local wasOnTreadmill = treadmillAssigned or autoActivity == "TREADMILL" or autoActivity == "TO_TREADMILL"
 	stopAutomation(reason or "AUTO arrete")
+	if not automaticMode then
+		for uid,entry in pairs(queuedEggs) do
+			if entry.Source~="MANUEL" then queuedEggs[uid],trackedEggs[uid]=nil,nil end
+		end
+	end
 	autoActivity = "IDLE"
 	if wasOnTreadmill and TreadmillRemotes and not treadmillPending then
 		local stopToken = generation
@@ -4583,13 +4616,9 @@ local function worker(token)
 			if not exited then stopAutomation("Sortie tapis : " .. tostring(exitReason)); return end
 			if not autoEnabled or generation ~= token then return end
 			if not recovering and not directNext then
-				local destination, destinationReason = getStartAreaDestination()
-				if not destination then stopAutomation(destinationReason); return end
 				autoActivity = "TO_FARM"
-				setStatus("Trajet vers le centre de StartArea...")
-				log("START_AREA_MOVETO", "Pathfinding hors tapis vers %s", FusionModules.Helpers.formatPosition(destination))
-				local reached, reason = measureAction("TRAJET_STARTAREA", FusionModules.Helpers.PathMove, destination, token, false)
-				if not reached then if FusionModules.CollectionReturnPending then directNext=false;continue end;stopAutomation("StartArea : " .. tostring(reason)); return end
+				local reached, reason = FusionModules.Helpers.DepartSafe(token,nil,false)
+				if not reached then if generation~=token or not autoEnabled then return end;if FusionModules.CollectionReturnPending then directNext=false;continue end;stopAutomation("StartArea : " .. tostring(reason)); return end
 			end
 			if not autoEnabled or generation ~= token then return end
 			local entered,entryReason=true,nil
@@ -4644,11 +4673,11 @@ local function worker(token)
 			directNext = false
 			if automaticMode and FusionModules.SlickRick.Available() then
                 FusionModules.SlickRick.Idle(token)
+            elseif automaticMode and FusionModules.Skyfall.Available() then
+                FusionModules.Skyfall.Idle(token)
             elseif automaticMode and FusionModules.Helpers.FishingMode() then
                 local ok,reason=FusionModules.Helpers.FishingIdle(token)
                 if not ok then stopAutomation("Cosmic Eclipse : "..tostring(reason));return end
-            elseif automaticMode and FusionModules.Skyfall.Available() then
-                FusionModules.Skyfall.Idle(token)
             elseif automaticMode and not FusionModules.Helpers.FishingMode()and FusionModules.Butterflies.Available() then
 				FusionModules.Butterflies.Idle(token)
             elseif automaticMode and FusionModules.StormRush.Available() then
@@ -5428,7 +5457,7 @@ shared.__AutoSAEController = {Destroy = destroy, Gui = gui, Reporting = FusionMo
   end,
   MoveForFishing=FusionModules.Helpers.MoveForFishing,
   FishingTravelValid=function()return not destroyed and automaticMode and autoEnabled and not queuePaused and not stopAfterFlight and not serverHopPending end,
-  FishingAutomaticValid=function()return not destroyed and automaticMode and autoEnabled and not queuePaused and not stopAfterFlight and not serverHopPending and FusionModules.Helpers.FishingMode()end,
+  FishingAutomaticValid=function()return not destroyed and automaticMode and autoEnabled and not queuePaused and not stopAfterFlight and not serverHopPending and FusionModules.Helpers.FishingMode() and not FusionModules.SlickRick.Available() and not FusionModules.Skyfall.Available()end,
   FishingLock=function(value)FusionModules.FishingBusy=value==true;FusionModules.Reporting.MarkSettingsDirty()end,
   CanStartFishing=function()local carry=readCarry();return carry and not carry.IsCarrying and not treadmillPending and not treadmillAssigned and not(inFlightRequest and not inFlightRequest.done) end,
   IsEnabled=function()return automaticMode end,
