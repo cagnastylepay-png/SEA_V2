@@ -97,6 +97,7 @@ end
 
 FusionModules.Options.AutoSkyfall=false
 FusionModules.Options.AutoSlickRick=false
+FusionModules.Options.AutoStormyEgg=false
 FusionModules.Options.AutoPlotUpgrade=false
 FusionModules.Options.IdleMode="Treadmill"
 FusionModules.Options.AutoCosmicEclipse=false
@@ -194,7 +195,7 @@ end
 FusionModules.Busy = false
 FusionModules.Request = shared.__AutoSAEFusionRequest
 function FusionModules.Pending()
-	return (FusionModules.SlickRick and FusionModules.SlickRick.Purchasing) or FusionModules.FishingBusy or FusionModules.ManualBusy or FusionModules.MutationBusy or FusionModules.Busy or (FusionModules.Request and not FusionModules.Request.done)or(FusionModules.Help and FusionModules.Help.DropRequest and not FusionModules.Help.DropRequest.done)
+	return (FusionModules.StormyEgg and FusionModules.StormyEgg.Purchasing) or (FusionModules.SlickRick and FusionModules.SlickRick.Purchasing) or FusionModules.FishingBusy or FusionModules.ManualBusy or FusionModules.MutationBusy or FusionModules.Busy or (FusionModules.Request and not FusionModules.Request.done)or(FusionModules.Help and FusionModules.Help.DropRequest and not FusionModules.Help.DropRequest.done)
 end
 local EggSaleRemote
 local GameplayBalance
@@ -380,7 +381,7 @@ local function loadSettings()
 		minimumRatePerSecond = minimum * 1e9
 	end
  for key,value in pairs(FusionModules.Options)do
-  if type(value)=="boolean"and key~="AutoCosmicEclipse"and key~="AutoSkyfall"and key~="AutoSlickRick"and key~="AutoPlotUpgrade"and key~="AutoTreadmillUpgrade"and key~="AutoHelp"and key~="AutoMutations"and key~="AutoSellAnimals"and not key:match("^Mutation")then FusionModules.Options[key]=automaticMode end
+  if type(value)=="boolean"and key~="AutoCosmicEclipse"and key~="AutoSkyfall"and key~="AutoStormyEgg"and key~="AutoSlickRick"and key~="AutoPlotUpgrade"and key~="AutoTreadmillUpgrade"and key~="AutoHelp"and key~="AutoMutations"and key~="AutoSellAnimals"and not key:match("^Mutation")then FusionModules.Options[key]=automaticMode end
  end
  FusionModules.Options.AutoEggsMin=minimumRatePerSecond
  FusionModules.Options.AutoSellMax=minimumRatePerSecond
@@ -2498,6 +2499,10 @@ local function moveActivity(destination, token, interruptForEgg, nextDestination
   if autoActivity=="TO_FISHING"and FusionModules.FishingMoveValid and not FusionModules.FishingMoveValid()then stopMovement(true);return false,"pêche interrompue"end
   if autoActivity=="TO_FARM"and FusionModules.CollectionReturnPending then stopMovement(true);return false,"COLLECTION_STOPPED"end
   if autoActivity=="TO_UPGRADE"and FusionModules.UpgradeMoveValid and not FusionModules.UpgradeMoveValid()then stopMovement(true);return false,"upgrade interrompue : priorite au vol ou option OFF"end
+  if autoActivity=="STORMY_EGG" and FusionModules.StormyEgg.MoveValid and not FusionModules.StormyEgg.MoveValid() then
+   stopMovement(true);return false,"Stormy Egg interrompu"
+  end
+  if autoActivity=="TO_TREADMILL" and FusionModules.StormyEgg.Available() then stopMovement(true);return false,"stormy egg"end
   if autoActivity=="SLICK_RICK" and FusionModules.SlickRick.MoveValid and not FusionModules.SlickRick.MoveValid() then
    stopMovement(true);return false,"Slick Rick interrompu"
   end
@@ -3594,7 +3599,7 @@ function FusionModules.Butterflies.Idle(token)
  log("ACTION","Collecte des papillons en cours")
  setStatus("Papillons : filet equipe jusqu'au prochain cycle d'oeufs.")
  while FusionModules.Options.AutoPapillon and activityValid(token,character) and automaticMode and not stopAfterFlight
-  and b.Revision==revision and Workspace:GetServerTimeNow()<b.Until and not FusionModules.Skyfall.Available() and not FusionModules.Helpers.FishingMode() and not FusionModules.SlickRick.Available() do
+  and b.Revision==revision and Workspace:GetServerTimeNow()<b.Until and not FusionModules.Skyfall.Available() and not FusionModules.Helpers.FishingMode() and not FusionModules.SlickRick.Available() and not FusionModules.StormyEgg.Available() do
   local present,net=b.Available(true)
   if not present then break end
   if net.Parent~=character then humanoid:EquipTool(net) end
@@ -3837,7 +3842,7 @@ function FusionModules.Skyfall.Run(token)
  local function active()
   return activityValid(token,character) and automaticMode and not stopAfterFlight
    and not serverHopPending and not FusionModules.CollectionReturnPending
-   and next(queuedEggs)==nil and sky.Rocks()~=nil and not FusionModules.SlickRick.Available()
+   and next(queuedEggs)==nil and sky.Rocks()~=nil and not FusionModules.SlickRick.Available() and not FusionModules.StormyEgg.Available()
  end
  if player:GetAttribute("InAlienLagoon")==true then
   local runtime=FusionModules.AdminRuntime
@@ -3910,6 +3915,111 @@ function FusionModules.Skyfall.Idle(token)
  if bat and backpack and bat.Parent==player.Character then bat.Parent=backpack end
  if generation==token then stopMovement(true);autoActivity="IDLE" end
  if not ok then sky.RetryAt=os.clock()+10 else sky.RetryAt=os.clock()+1 end
+end
+
+FusionModules.StormyEgg={RetryAt=0}
+
+function FusionModules.StormyEgg.Available()
+ local shop=FusionModules.StormyEgg
+ if FusionModules.Reporting.ClientKind~="admin" or not FusionModules.Options.AutoStormyEgg
+  or not Save or os.clock()<shop.RetryAt then return nil end
+ if not shop.Util then
+  local ok,util,flags=pcall(function()
+   return require(ReplicatedStorage.Shared.Util.StormheartCave),require(ReplicatedStorage.Shared.Flags.StormheartCaveFlags)
+  end)
+  if not ok then shop.RetryAt=os.clock()+30;return nil end
+  shop.Util,shop.Flags=util,flags
+ end
+ if not shop.Util.GachaOpen() then return nil end
+ local profile=Save.Peek()
+ local data=profile and profile[shop.Util.ProfileKey]
+ local balance=data and data[shop.Util.CurrencyField]
+ local price=shop.Flags.GachaPrice:Get()
+ if type(balance)~="number" or type(price)~="number" or price<=0 or balance<price
+  or balance==shop.UncertainBalance then return nil end
+ local node=Workspace
+ for _,name in ipairs({"World","Build","Props","Zone8.5Props","Folder","StormheartGacha","Pedestal","BuyPrompt"})do
+  node=node:FindFirstChild(name)
+  if not node then return nil end
+ end
+ if node:IsA("ProximityPrompt") and node.Enabled then return node,balance,price end
+end
+
+function FusionModules.StormyEgg.Run(token)
+ local shop=FusionModules.StormyEgg
+ local character,_,root=getCharacterParts()
+ if not root then return end
+ local prompt=shop.Available()
+ if not prompt then return end
+ local function active()
+  return activityValid(token,character) and automaticMode and not stopAfterFlight
+   and not serverHopPending and not FusionModules.CollectionReturnPending
+   and next(queuedEggs)==nil and not FusionModules.SlickRick.Available()
+   and not FusionModules.Helpers.FishingMode()
+ end
+ if not active() then return end
+ local exited,reason=leaveTreadmill(token)
+ if not exited then error(tostring(reason),0) end
+ if not active() or shop.Available()~=prompt then return end
+ local pedestal=prompt.Parent
+ if not pedestal or not pedestal:IsA("BasePart") then return end
+ local function inRange()
+  return (root.Position-pedestal.Position).Magnitude<=math.min(prompt.MaxActivationDistance,shop.Flags.GachaReach:Get())
+ end
+ autoActivity="STORMY_EGG"
+ if not inRange() then
+  local offset=Vector3.new(root.Position.X-pedestal.Position.X,0,root.Position.Z-pedestal.Position.Z)
+  local approach=offset.Magnitude>0 and offset.Unit*3 or Vector3.zero
+  local point=Vector3.new(pedestal.Position.X,root.Position.Y,pedestal.Position.Z)+approach
+  shop.MoveValid=function()return active() and shop.Available()==prompt end
+  setStatus("Stormy Egg · trajet vers le piédestal")
+  local reached=moveActivity(point,token,true)
+  shop.MoveValid=nil
+  if not reached then return end
+ end
+ stopMovement(true)
+ local remote=require(ReplicatedStorage.Shared.Remotes).StormheartCave.GachaBuy
+ while active() and inRange() do
+  local available,balance,price=shop.Available()
+  if available~=prompt then return end
+  setStatus("Stormy Egg · achat ("..tostring(price).." Thunderstones)")
+  shop.Purchasing=true
+  local ok,bought=pcall(function()return remote:InvokeServer()end)
+  shop.Purchasing=false
+  if not ok or type(bought)~="boolean" then
+   shop.UncertainBalance=balance
+   error("Stormy Egg : résultat d’achat incertain",0)
+  end
+  if not bought then
+   shop.RetryAt=os.clock()+60
+   setStatus("Stormy Egg · achat refusé")
+   return
+  end
+  log("ACTION","Stormy Egg : achat confirmé")
+  local deadline=os.clock()+5
+  local settled=false
+  repeat
+   local profile=Save.Peek()
+   local data=profile and profile[shop.Util.ProfileKey]
+   local current=data and data[shop.Util.CurrencyField]
+   settled=type(current)=="number" and current<balance
+   if not settled then task.wait(.15) end
+  until settled or os.clock()>=deadline
+  if not settled then
+   shop.UncertainBalance=balance
+   error("Stormy Egg : solde non synchronisé après achat",0)
+  end
+  task.wait(.45)
+ end
+end
+
+function FusionModules.StormyEgg.Idle(token)
+ local shop=FusionModules.StormyEgg
+ local ok=FusionModules.Protect("STORMY_EGG",shop.Run,token)
+ shop.MoveValid=nil
+ shop.Purchasing=false
+ shop.RetryAt=math.max(shop.RetryAt,os.clock()+(ok and 5 or 20))
+ if generation==token then stopMovement(true);autoActivity="IDLE" end
 end
 
 function FusionModules.Helpers.FishingMode()
@@ -4031,7 +4141,7 @@ local function idleOnTreadmill(token)
 		local destination = bottom.Position + Vector3.new(0, humanoid.HipHeight + 2, 0)
 		local ok, reason = measureAction("ENTREE_TAPIS", moveActivity, destination, token, true)
 		if not ok then
-			if reason == "nouvel oeuf"or reason=="tapis OFF"or reason=="skyfall"or reason=="eclipse"or reason=="slick rick"then return true end
+			if reason == "nouvel oeuf"or reason=="tapis OFF"or reason=="skyfall"or reason=="eclipse"or reason=="slick rick"or reason=="stormy egg"then return true end
 			return false, reason
 		end
 		-- The normal controller detects entry with its downward raycast.
@@ -4051,7 +4161,7 @@ local function idleOnTreadmill(token)
 	if destroyed or not autoEnabled or generation ~= token then return true end
 	setStatus("TREADMILL : entrainement, attente d'un oeuf...")
 	while autoEnabled and generation == token and automaticMode and not queuePaused
-		and not FusionModules.Helpers.FishingMode()and FusionModules.Options.AutoTreadmill and next(queuedEggs) == nil and not activityRecheckPending and not FusionModules.Butterflies.Available() and not FusionModules.Skyfall.Available() and not FusionModules.SlickRick.Available() and not destroyed do
+		and not FusionModules.Helpers.FishingMode()and FusionModules.Options.AutoTreadmill and next(queuedEggs) == nil and not activityRecheckPending and not FusionModules.Butterflies.Available() and not FusionModules.Skyfall.Available() and not FusionModules.SlickRick.Available() and not FusionModules.StormyEgg.Available() and not destroyed do
 		serviceWallMaintenance(token)
   if FusionModules.AdminRuntime and FusionModules.AdminRuntime.ProgressTravelling and FusionModules.AdminRuntime.ProgressTravelling()then task.wait(CONFIG.ScanInterval);continue end
 		if not treadmillAssigned and autoActivity ~= "TREADMILL" then return true end
@@ -4257,6 +4367,8 @@ local function worker(token)
             elseif automaticMode and FusionModules.Helpers.FishingMode() then
                 local ok,reason=FusionModules.Helpers.FishingIdle(token)
                 if not ok then stopAutomation("Cosmic Eclipse : "..tostring(reason));return end
+            elseif automaticMode and FusionModules.StormyEgg.Available() then
+                FusionModules.StormyEgg.Idle(token)
             elseif automaticMode and FusionModules.Skyfall.Available() then
                 FusionModules.Skyfall.Idle(token)
             elseif automaticMode and not FusionModules.Helpers.FishingMode()and FusionModules.Butterflies.Available() then
@@ -4732,6 +4844,7 @@ function FusionModules.RemoteHop.Receive(message)
  hop.Try()
 end
 function FusionModules.RemoteHop.Try()
+ if FusionModules.StormyEgg and FusionModules.StormyEgg.Purchasing then return false end
  if FusionModules.SlickRick and FusionModules.SlickRick.Purchasing then return false end
  if FusionModules.BetweenFlights then return false end
  local hop=FusionModules.RemoteHop
