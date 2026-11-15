@@ -2493,7 +2493,7 @@ local function activityValid(token, character)
 		and player.Character == character
 end
 
-local function moveActivity(destination, token, interruptForEgg, nextDestination)
+local function moveActivity(destination, token, interruptForEgg, nextDestination, stopWithin)
 	local character, humanoid, root = getCharacterParts()
 	if not character or not humanoid or not root then return false, "personnage absent" end
 	local started = os.clock()
@@ -2540,6 +2540,10 @@ local function moveActivity(destination, token, interruptForEgg, nextDestination
 		end
 		local now = os.clock()
 		local current = root.Position
+		if stopWithin and stopWithin(current) then
+			stopMovement(true)
+			return true
+		end
 		local distance = distanceXZ(current, destination)
 		if distance <= 3 then
 			move(destination, {Radius = 3})
@@ -4231,7 +4235,31 @@ do
    if not equipGlass(character,humanoid) then break end
    local prompt=conductor:FindFirstChild("InsertPrompt")
    if not waitFor(function()return prompt and prompt.Enabled end,1,active) then break end
-   if not press(prompt,token,function()return active() and util.State()=="Idle" end) then break end
+   local point=promptPosition(prompt)
+   local _,_,root=getCharacterParts()
+   if not point or not root then break end
+   local reach=math.min(prompt.MaxActivationDistance,rush.Flags.ConductorReach:Get())
+   local function canInsert()
+    return active() and util.State()=="Idle" and prompt.Enabled and prompt:IsDescendantOf(Workspace)
+   end
+   local function withinApproach(position)
+    return (position-point).Magnitude<=math.max(reach-3,reach*.5)
+   end
+   if (root.Position-point).Magnitude>reach then
+    rush.MoveValid=canInsert
+    moveActivity(point,token,true,nil,withinApproach)
+    rush.MoveValid=nil
+   end
+   if not canInsert() then break end
+   stopMovement(true)
+   RunService.Heartbeat:Wait()
+   local currentPoint=promptPosition(prompt)
+   if not canInsert() or not currentPoint then break end
+   local distance=(root.Position-currentPoint).Magnitude
+   if distance>reach then
+    error(("Prompt d’insertion à %.1f studs, portée %.1f"):format(distance,reach),0)
+   end
+   if not executorTools.FirePrompt(prompt) then break end
    if not waitFor(function()return util.State()~="Idle" or missingGlass()<needed end,4,active) then break end
   end
   if util.State()=="Charging" or util.State()=="Rush" then
