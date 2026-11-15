@@ -4031,7 +4031,7 @@ do
   end
   if state=="Charging" or (state=="Rush" and player:GetAttribute(util.Attributes.Eligible)==true) then return true end
   if sparks()>=rush.Flags.SparkTradePrice:Get() and sparks()~=rush.UncertainBalance then return true end
-  if state=="Idle" and insertedGlass()>=2 then return true end
+  if state=="Idle" and insertedGlass()>=1 then return true end
   local needed=state=="Idle" and missingGlass() or 0
   local gear=profile().GearInventory
   return needed>0 and gear and (gear[util.GearId] or 0)>=needed
@@ -4129,6 +4129,10 @@ do
   local map
   if not waitFor(function()map=util.LoadedMap();return map~=nil end,5,active) then return end
   local conductor=util.Marker(map,util.Markers.Conductor)
+  if conductor and util.State()=="Idle" and active() then
+   setStatus("Storm Rush · attente de l’activation (60 s)")
+   waitFor(function()return util.State()~="Idle"end,60,active)
+  end
   while active() and util.State()=="Idle" and conductor do
    local needed=missingGlass()
    local inventory=profile().GearInventory
@@ -4138,10 +4142,6 @@ do
    if not waitFor(function()return prompt and prompt.Enabled end,1,active) then break end
    if not press(prompt,token,function()return active() and util.State()=="Idle" end) then break end
    if not waitFor(function()return util.State()~="Idle" or missingGlass()<needed end,4,active) then break end
-  end
-  if util.State()=="Idle" and insertedGlass()>=2 and active() then
-   setStatus("Storm Rush · deux Stormglass insérés, attente de l’activation")
-   waitFor(function()return util.State()~="Idle"end,20,function()return active() and insertedGlass()>=2 end)
   end
   if util.State()=="Charging" or util.State()=="Rush" then
    setStatus("Storm Rush · attente des Sparks")
