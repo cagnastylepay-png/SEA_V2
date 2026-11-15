@@ -3995,6 +3995,7 @@ function FusionModules.StormRush.Bind(remotes)
  rush.Util=require(ReplicatedStorage.Shared.Util.StormheartCave)
  rush.Flags=require(ReplicatedStorage.Shared.Flags.StormheartCaveFlags)
  rush.Remotes=remotes.StormheartCave
+ rush.Managed=rush.Inside()
  local prompts=game:GetService("ProximityPromptService")
  connect(prompts.PromptShown,function(prompt)
   if rush.IsEntrancePrompt(prompt) then rush.VisibleEntrance=prompt end
@@ -4151,21 +4152,32 @@ do
 
  function rush.Exit(token)
   if not rush.Inside() then return true end
-  local character=getCharacterParts()
+  local character,humanoid,root=getCharacterParts()
+  if not humanoid or not root then return false,"personnage absent" end
   local function valid() return activityValid(token,character) end
   local util=rush.Util
   local exit=util.Marker(util.LoadedMap(),util.Markers.Exit)
-  if not exit then return false end
+  if not exit then return false,"point de sortie indisponible" end
   local prompt=exit:FindFirstChildWhichIsA("ProximityPrompt",true)
+  local point=prompt and promptPosition(prompt) or exit.Position
   autoActivity="STORM_RUSH"
-  if prompt then
-   if not press(prompt,token,valid) then return false end
-  else
-   if not approach(exit.Position,4,token,valid) then return false end
-   local _,humanoid=getCharacterParts()
-   if humanoid then humanoid:MoveTo(exit.Position) end
+  if not prompt or (root.Position-point).Magnitude>prompt.MaxActivationDistance then
+   rush.MoveValid=function()return valid() and rush.Inside()end
+   local reached,reason=FusionModules.Helpers.PathMove(point,token,false)
+   rush.MoveValid=nil
+   if not rush.Inside() then return true end
+   if not reached then return false,reason end
   end
-  return waitFor(function()return not rush.Inside()end,10,valid)
+  if not valid() then return false,"trajet annulé" end
+  if prompt then
+   stopMovement(true)
+   if not press(prompt,token,valid) then return false,"prompt de sortie non déclenché" end
+  else
+   humanoid:MoveTo(exit.Position)
+  end
+  local left=waitFor(function()return not rush.Inside()end,10,valid)
+  if not left then stopMovement(true) end
+  return left,"sortie non confirmée par le jeu"
  end
 
  local function fly(round,map,humanoid,root,valid)
@@ -4935,11 +4947,13 @@ local function worker(token)
 		syncQueue()
 		if FusionModules.StormRush.Managed and FusionModules.StormRush.Inside() then
             setStatus("Storm Rush · sortie de la grotte")
-            if FusionModules.StormRush.Exit(token) then
+            local left,reason=FusionModules.StormRush.Exit(token)
+            if left then
                 FusionModules.StormRush.Managed=false
                 autoActivity="IDLE"
-            else
-                task.wait(1)
+            elseif autoEnabled and generation==token then
+                setStatus("Storm Rush · sortie à réessayer : "..tostring(reason))
+                task.wait(2)
             end
             continue
         end
