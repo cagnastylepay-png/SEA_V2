@@ -3706,18 +3706,22 @@ function FusionModules.Skyfall.Available()
  return os.clock()>=FusionModules.Skyfall.RetryAt and FusionModules.Skyfall.Rocks()
 end
 
-function FusionModules.Skyfall.SelectRock(rocks,position,skipped,crackedOnly)
+function FusionModules.Skyfall.IsInfused(rock)
+ return rock:GetAttribute("StormheartInfused")==true or rock:FindFirstChild("InfusedFx")~=nil
+end
+
+function FusionModules.Skyfall.SelectRock(rocks,position,skipped,infusedOnly)
  local tags=FusionModules.Skyfall.Tags
- local target,nearest,bestCracked
+ local target,nearest,bestInfused
  for _,rock in ipairs(rocks:GetChildren())do
   local health=rock:GetAttribute("Health")
   if rock:IsA("BasePart") and type(health)=="number" and health>0
    and tags:HasTag(rock,"BatAutoSwing") and not skipped[rock] then
-   local cracked=rock.Name=="Cracked"
-   if not crackedOnly or cracked then
+   local infused=FusionModules.Skyfall.IsInfused(rock)
+   if not infusedOnly or infused then
     local distance=distanceXZ(position,rock.Position)
-    if not target or (cracked and not bestCracked) or (cracked==bestCracked and distance<nearest) then
-     target,nearest,bestCracked=rock,distance,cracked
+    if not target or (infused and not bestInfused) or (infused==bestInfused and distance<nearest) then
+     target,nearest,bestInfused=rock,distance,infused
     end
    end
   end
@@ -3922,7 +3926,7 @@ function FusionModules.Skyfall.Run(token)
    setStatus("Skyfall · trajet vers "..target.Name)
    local function targetActive()
     if not active() or target.Parent~=rocks or not sky.Tags:HasTag(target,"BatAutoSwing") then return false end
-    return target.Name=="Cracked"
+    return sky.IsInfused(target)
      or not sky.SelectRock(rocks,root.Position,skipped,true)
    end
    sky.MoveValid=targetActive
@@ -4294,7 +4298,7 @@ do
    local point=promptPosition(prompt)
    local _,_,root=getCharacterParts()
    if not point or not root then break end
-   local reach=math.min(prompt.MaxActivationDistance,rush.Flags.ConductorReach:Get())
+   local reach=rush.Flags.ConductorReach:Get()
    local function canInsert()
     return active() and util.State()=="Idle" and prompt.Enabled and prompt:IsDescendantOf(Workspace)
    end
@@ -4317,10 +4321,20 @@ do
    end
    if missingGlass()~=needed then continue end
    setStatus("Storm Rush · insertion du Stormglass")
-   local activated,reason=executorTools.ActivateNativePrompt(prompt)
-   if not activated and canInsert() and missingGlass()==needed then
-    activated,reason=executorTools.FirePrompt(prompt)
-   end
+   local previousReach=prompt.MaxActivationDistance
+   local previousLineOfSight=prompt.RequiresLineOfSight
+   local ok,activated,reason=pcall(function()
+    prompt.RequiresLineOfSight=false
+    prompt.MaxActivationDistance=math.max(previousReach,reach)
+    local fired,detail=executorTools.FirePrompt(prompt)
+    if not fired and canInsert() and missingGlass()==needed then
+     return executorTools.ActivateNativePrompt(prompt)
+    end
+    return fired,detail
+   end)
+   prompt.MaxActivationDistance=previousReach
+   prompt.RequiresLineOfSight=previousLineOfSight
+   if not ok then error("Prompt d’insertion : "..tostring(activated),0) end
    if not activated then
     if active() then error("Prompt d’insertion : "..tostring(reason),0) end
     break
