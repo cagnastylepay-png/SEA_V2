@@ -207,6 +207,7 @@ local refreshFlightLog
 local stopAfterFlight = false
 local queuedEggs = {}
 function FusionModules.Helpers.ShouldRun()
+ if FusionModules.Arrival and FusionModules.Arrival.ManualSteal then return true end
  if FusionModules.Reporting.ClientKind=="admin" and player:GetAttribute("InAlienLagoon")==true then return true end
  for key,value in pairs(FusionModules.Options)do if key~="QueueNearest"and type(value)=="boolean"and value then return true end end
  return next(queuedEggs)~=nil
@@ -2517,7 +2518,7 @@ function FusionModules.Arrival.Clear(reason)
  local arrival=FusionModules.Arrival
  if not arrival.Uid then return end
  log("ARRIVAL_TARGET","UID=%s : %s",arrival.Uid,tostring(reason))
- arrival.Uid=nil;arrival.Deadline=nil;arrival.DirectFromBoat=nil
+ arrival.Uid=nil;arrival.Deadline=nil;arrival.DirectFromBoat=nil;arrival.ManualSteal=nil
  pcall(function()game:GetService("TeleportService"):SetTeleportSetting("OvoraRemoteArrival",nil)end)
 end
 function FusionModules.Arrival.Load()
@@ -2528,17 +2529,26 @@ function FusionModules.Arrival.Load()
   or type(saved.expiresAt)~="number"or saved.expiresAt~=saved.expiresAt
   or saved.expiresAt<=os.time()or saved.expiresAt>os.time()+300 then return end
  FusionModules.Arrival.Uid=saved.uid
+ FusionModules.Arrival.ManualSteal=saved.manualSteal==true
  FusionModules.Arrival.Deadline=os.clock()+math.min(CONFIG.ArrivalTargetTimeout,saved.expiresAt-os.time())
 end
 function FusionModules.Arrival.Waiting()
  local arrival=FusionModules.Arrival
  if not arrival.Uid then return false end
- if destroyed or not automaticMode then arrival.Clear("AUTO inactif");return false end
+ if destroyed or (not automaticMode and not arrival.ManualSteal) then arrival.Clear("AUTO inactif");return false end
  if os.clock()>=arrival.Deadline then arrival.Clear("Delai de chargement termine");return false end
  if ownsEgg(arrival.Uid)then arrival.Clear("Oeuf deja possede");return false end
  local record,ok=readField(arrival.Uid)
  if ok and record and not record.ObservationOnly then
   if not isTrackedFieldState(record)or isHeldByOther(record)then arrival.Clear("Cible indisponible");return false end
+  if arrival.ManualSteal then
+   if queuedEggs[arrival.Uid] or enqueueEgg(record,"MANUEL") then
+    queuedEggs[arrival.Uid].Source="MANUEL"
+    cooldowns[arrival.Uid]=nil
+    return false
+   end
+   arrival.Clear("Cible manuelle indisponible");return false
+  end
   if queuedEggs[arrival.Uid]and(getRatePerSecond(record)~=nil or FusionModules.Helpers.IsAlwaysEligibleRarity(record))then return false end
   local profileOK,profile=pcall(Save.Peek)
   if profileOK and type(profile)=="table"and type(profile.Index)=="table"and getRatePerSecond(record)~=nil then
@@ -2560,7 +2570,7 @@ local function selectBest()
 			if ok and isTrackedFieldState(latest) and not ownsEgg(uid) then
 				if not latest.ObservationOnly then records[uid] = latest end
 				local rate = getRatePerSecond(latest)
-				if rate == nil and FusionModules.Helpers.IsAlwaysEligibleRarity(latest) then rate = 0 end
+				if rate == nil and (entry.Source=="MANUEL" or FusionModules.Helpers.IsAlwaysEligibleRarity(latest)) then rate = 0 end
 				if rate and FusionModules.Helpers.FlightEligibility(latest,entry.Source,rate)then
 					if uid==FusionModules.Arrival.Uid then return latest,rate end
 					local priority={Uid=uid,Source=entry.Source,Rate=rate,Distance=FusionModules.Helpers.QueueDistance(latest,root and root.Position)}
@@ -4665,6 +4675,7 @@ function FusionModules.Helpers.FishingIdle(token)
  runtime.SetFishing(true,true)
  local fishingRun=runtime.FishingRun
  while runtime.FishingRun==fishingRun and activityValid(token,player.Character)and automaticMode and FusionModules.Helpers.FishingMode()and runtime.Fishing do
+  if FusionModules.Arrival.ManualSteal then break end
   syncQueue()
   local selected,rate=selectBest()
   if selected then FusionModules.Helpers.RequestFishingEgg(selected,rate)
@@ -4802,7 +4813,7 @@ local function worker(token)
 	while autoEnabled and generation == token and not destroyed do
         syncQueue()
   if FusionModules.Reporting.ClientKind=="admin" and player:GetAttribute("InAlienLagoon")==true
-   and not FusionModules.Helpers.FishingMode() then
+   and (FusionModules.Arrival.ManualSteal or not FusionModules.Helpers.FishingMode()) then
    local runtime=FusionModules.AdminRuntime
    if runtime and runtime.Initialized then
     runtime.StopFishing()
@@ -5024,7 +5035,7 @@ wakeQueue = function()
  end
  if os.clock() < (FusionModules.QueueResumeAt or 0) then return end
  if not FusionModules.Helpers.ShouldRun()then return end
- if FusionModules.ManualBusy or FusionModules.MutationBusy or FusionModules.Pending() or inventoryPlacementBusy or placementRequest or serverHopPending or destroyed or not ready or autoEnabled or queuePaused or (not automaticMode and next(queuedEggs) == nil) then return end
+ if FusionModules.ManualBusy or FusionModules.MutationBusy or FusionModules.Pending() or inventoryPlacementBusy or placementRequest or serverHopPending or destroyed or not ready or autoEnabled or queuePaused or (not automaticMode and not FusionModules.Arrival.ManualSteal and next(queuedEggs) == nil) then return end
 	if inFlightRequest and not inFlightRequest.done then return end
 	startAutomation(minimumRatePerSecond / 1e9)
 end
@@ -5417,11 +5428,12 @@ function FusionModules.RemoteHop.Note(key,text,target)
  end
  log("SERVER_CHANGE","%s",text)
 end
-function FusionModules.RemoteHop.Validate(target, forced)
+function FusionModules.RemoteHop.Validate(target, forced, manualSteal)
  local report=FusionModules.Reporting
  if FusionModules.Reporting.ClientKind~="admin" then return false end
  if destroyed or not ready or not report or not report.Ready or not report.TeleportAllowed or not report.SettingsAllowed or (not forced and not report.AutomationActive()) then return false end
- if type(target)~="table" or target.placeId~=tostring(game.PlaceId) or type(target.jobId)~="string" or target.jobId=="" or #target.jobId>128 or (target.jobId==game.JobId and not FusionModules.Helpers.FishingActive()) then return false end
+ if type(target)~="table" or target.placeId~=tostring(game.PlaceId) or type(target.jobId)~="string" or target.jobId=="" or #target.jobId>128 or (target.jobId==game.JobId and not manualSteal and not FusionModules.Helpers.FishingActive()) then return false end
+ if manualSteal then return forced and type(target.uid)=="string" and #target.uid>0 and #target.uid<=128 end
  if forced then return true end
  local rate=target.incomePerSecond
  if type(rate)~="number" or rate~=rate or rate<0 or rate>=math.huge then return false end
@@ -5439,19 +5451,20 @@ function FusionModules.RemoteHop.Receive(message)
   if hop.Pending then hop.Note("cancel:"..tostring(hop.Pending.Id),"Cible annulee par Render (oeuf disparu, expire ou conditions modifiees)",hop.Pending.Target)end
   hop.Pending=nil;return
  end
- if not FusionModules.RemoteHop.Validate(message.target,message.force==true)then
+ local manualSteal=message.force==true and message.manualSteal==true
+ if not FusionModules.RemoteHop.Validate(message.target,message.force==true,manualSteal)then
   hop.Note("refused:"..tostring(message.requestId),"Demande refusee localement : "..FusionModules.Reporting.AutomationReason().." ; verifier seuil, index, serveur visite ou oeuf indisponible",message.target)
   hop.Pending=nil;return
  end
  local expiry,serverTime=message.target.expiresAt,message.serverTime
  if type(expiry)~="number" or type(serverTime)~="number" or expiry<=serverTime or expiry-serverTime>1200000 then hop.Pending=nil;return end
- if message.target.jobId==game.JobId then
+ if message.target.jobId==game.JobId and not manualSteal then
   hop.LocalReturnTarget=message.target
   hop.Note("local-return:"..tostring(message.target.uid),"Oeuf local : retour en bateau depuis le lagon",message.target)
   return
  end
  hop.Note("received:"..tostring(message.requestId),"Cible recue de Render",message.target)
- hop.Pending={Target=message.target,Deadline=os.clock()+(expiry-serverTime)/1000,Id=message.requestId,Forced=message.force==true}
+ hop.Pending={Target=message.target,Deadline=os.clock()+(expiry-serverTime)/1000,Id=message.requestId,Forced=message.force==true,ManualSteal=manualSteal}
  if message.force==true then hop.RetryAt=0 end
  hop.Try()
 end
@@ -5463,10 +5476,25 @@ function FusionModules.RemoteHop.Try()
  if hop.Processing or serverHopPending or not hop.Pending or os.clock()<hop.RetryAt then return false end
  if (FusionModules.FishingBusy and not FusionModules.Helpers.FishingMode())or FusionModules.MutationBusy or FusionModules.ManualBusy then return false end
  local request=hop.Pending
- if request.Target.jobId==game.JobId then hop.LocalReturnTarget=request.Target;hop.Pending=nil;return false end
- if os.clock()>=request.Deadline or not hop.Validate(request.Target,request.Forced)then
+ if FusionModules.Arrival.ManualSteal then return false end
+ if os.clock()>=request.Deadline or not hop.Validate(request.Target,request.Forced,request.ManualSteal)then
   hop.Note("invalid:"..tostring(request.Id),os.clock()>=request.Deadline and "Cible expiree avant le depart"or "Conditions locales non remplies avant le depart",request.Target)
   hop.Pending=nil;return false
+ end
+ if request.ManualSteal then
+  local carry=readCarry()
+  if currentCycle or (inFlightRequest and not inFlightRequest.done) or not carry or carry.IsCarrying
+   or FusionModules.Pending() or inventoryPlacementBusy or placementRequest or hatchInProgress then return false end
+  if request.Target.jobId==game.JobId then
+   hop.Pending=nil
+   FusionModules.Arrival.Uid=request.Target.uid
+   FusionModules.Arrival.Deadline=request.Deadline
+   FusionModules.Arrival.ManualSteal=true
+   FusionModules.Arrival.DirectFromBoat=nil
+   queuePaused=false;stopAfterFlight=false;FusionModules.QueueResumeAt=0
+   wakeQueue()
+   return true
+  end
  end
  local fishingDeparture=FusionModules.Helpers.FishingActive()
  local immediate=fishingDeparture or request.Forced or request.Target.incomePerSecond>=FusionModules.Options.TeleportInstantMin
@@ -5489,7 +5517,11 @@ function FusionModules.RemoteHop.Try()
    if not saved then release(why);return end
    local queued,reason=FusionModules.Helpers.prepareServerContinuation()
    if not queued then release(reason);return end
-   if hop.Pending~=request or os.clock()>=request.Deadline or not hop.Validate(request.Target,request.Forced) then release();return end
+   if hop.Pending~=request or os.clock()>=request.Deadline or not hop.Validate(request.Target,request.Forced,request.ManualSteal) then release();return end
+   if request.ManualSteal then
+    local carry=readCarry()
+    if currentCycle or (inFlightRequest and not inFlightRequest.done) or not carry or carry.IsCarrying then hop.Processing=false;return end
+   end
    if not immediate and (next(queuedEggs)~=nil or currentCycle)then hop.Processing=false;return end
    local target=request.Target
    if FusionModules.AdminRuntime and FusionModules.AdminRuntime.Fishing then FusionModules.AdminRuntime.StopFishing()end
@@ -5506,7 +5538,7 @@ function FusionModules.RemoteHop.Try()
    local description=string.format("%s [Poids=%s kg; Revenu=%s/s]",tostring(target.name or target.category or target.uid),(type(target.weightKg)=="number"and formatNumber(target.weightKg)or "inconnu"),formatNumber(target.incomePerSecond))
    setStatus("Teleportation vers "..description)
    log("SERVER_CHANGE","Quitter le serveur %s -> %s pour %s Mode=%s",game.JobId,target.jobId,description,request.Forced and "GO manuel force"or (immediate and "immediat"or "file vide"))
-   pcall(function()game:GetService("TeleportService"):SetTeleportSetting("OvoraRemoteArrival",{jobId=target.jobId,fromJobId=game.JobId,uid=target.uid,name=target.name,weightKg=target.weightKg,incomePerSecond=target.incomePerSecond,clientKind=FusionModules.Reporting.ClientKind,reporterUserId=tostring(player.UserId),expiresAt=os.time()+300})end)
+   pcall(function()game:GetService("TeleportService"):SetTeleportSetting("OvoraRemoteArrival",{jobId=target.jobId,fromJobId=game.JobId,uid=target.uid,name=target.name,weightKg=target.weightKg,incomePerSecond=target.incomePerSecond,clientKind=FusionModules.Reporting.ClientKind,reporterUserId=tostring(player.UserId),manualSteal=request.ManualSteal,expiresAt=os.time()+(request.ManualSteal and math.max(1,math.ceil(request.Deadline-os.clock())) or 300)})end)
    FusionModules.Reporting.FlushLogs()
    local connection
    local resumed=false
@@ -5595,7 +5627,11 @@ do
   elapsed+=dt
   if elapsed<CONFIG.ScanInterval then return end
   elapsed=0
-  if ready and not destroyed then syncQueue();wakeQueue()end
+  if ready and not destroyed then
+   syncQueue()
+   if FusionModules.Arrival.ManualSteal and not currentCycle then FusionModules.Arrival.Waiting() end
+   wakeQueue()
+  end
  end)
 end
 
@@ -5684,7 +5720,7 @@ if FusionModules.Reporting.Headless then
  if old then old:Destroy()end
 end
 local gui = Instance.new("Folder")
-if FusionModules.Reporting.ClientKind=="admin" then queuePaused=not automaticMode;stopAfterFlight=false end
+if FusionModules.Reporting.ClientKind=="admin" then queuePaused=not automaticMode and not FusionModules.Arrival.ManualSteal;stopAfterFlight=false end
 setStatus("Chargement des modules du jeu...")
 connect(player.CharacterRemoving, function()
 	stopAutomation("Personnage retire : redemarre depuis la zone sure")
