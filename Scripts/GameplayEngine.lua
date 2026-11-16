@@ -1473,50 +1473,30 @@ local function followTakenEgg(ctx)
 	return false,"annule"
 end
 
-function FusionModules.Helpers.TryBetaApproach(ctx, root, destination)
-	if not ctx.betaMovement or ctx.betaApproachTried or ctx.help or ctx.CollectionStopped then return false end
-	if not validCycle(ctx) or motionBlockReason(ctx) or not FusionModules.Helpers.GameplayEntryAllowed() then return false end
-	if isSafe(root.Position) ~= false or isSafe(destination) ~= false then return false end
-	if distanceXZ(root.Position, destination) <= CONFIG.ApproachDistance then return false end
-
-	local latest, readOK = readField(ctx.uid)
-	local eggPosition = getRecordPosition(latest)
-	if not readOK or not eggPosition or (latest.State ~= SLOT_STATE and latest.State ~= "Dropped") then return false end
-	-- Use the same height as the walking approach and leave room below the pickup limit.
-	local target = Vector3.new(eggPosition.X, destination.Y, eggPosition.Z)
-	if (target - eggPosition).Magnitude >= CONFIG.ApproachDistance or isSafe(target) ~= false then return false end
-
-	ctx.betaApproachTried = true
-	stopMovement(true)
-	root.CFrame = CFrame.new(target) * root.CFrame.Rotation
-	log("BETA_APPROACH", "Approche directe tentee | UID=%s", ctx.uid)
-
-	local deadline = os.clock() + 0.2
-	repeat
-		RunService.Heartbeat:Wait()
-		if not validCycle(ctx) or ctx.CollectionStopped then return true end
-		if motionBlockReason(ctx) or (root.Position - target).Magnitude >= CONFIG.ApproachDistance then
-			log("BETA_APPROACH", "Position corrigee ou mouvement interrompu | UID=%s", ctx.uid)
-			return true
-		end
-	until os.clock() >= deadline
-	return true
+function FusionModules.Helpers.DriveBetaOnGround(ctx, humanoid, root, destination, lastMoved)
+	if not ctx.betaMovement or ctx.betaGroundFallback or ctx.help or ctx.CollectionStopped or ctx.watchForReappearance then return end
+	if os.clock() - lastMoved > 0.45 then
+		ctx.betaGroundFallback = true
+		log("BETA_MOVEMENT", "Progression bloquee | reprise du trajet natif UID=%s", ctx.uid)
+		return
+	end
+	if humanoid.FloorMaterial == Enum.Material.Air or humanoid.WalkSpeed <= 0 then return end
+	local offset = destination - root.Position
+	local horizontal = Vector3.new(offset.X, 0, offset.Z)
+	if horizontal.Magnitude < 0.05 then return end
+	local speed = math.min(humanoid.WalkSpeed, horizontal.Magnitude * 12)
+	local velocity = horizontal.Unit * speed
+	root.AssemblyLinearVelocity = Vector3.new(velocity.X, root.AssemblyLinearVelocity.Y, velocity.Z)
+	if not ctx.betaGroundLogged then
+		ctx.betaGroundLogged = true
+		log("BETA_MOVEMENT", "Assistance au sol active | UID=%s", ctx.uid)
+	end
 end
 
 local function approachEgg(ctx, destination)
 	local _, humanoid, root = getCharacterParts()
 	if not humanoid or not root then return false, "personnage absent" end
 	setPhase(ctx, "APPROACH", "Course vers : " .. getAnimalName(ctx.record))
-	if FusionModules.Helpers.TryBetaApproach(ctx, root, destination) then
-		if not validCycle(ctx) then return false, "annule" end
-		if ctx.CollectionStopped then return false, "COLLECTION_STOPPED" end
-		if not FusionModules.Helpers.GameplayEntryAllowed() then
-			local entered, reason = FusionModules.Helpers.EnterGameplay(ctx.generation, function()
-				return validCycle(ctx) and not ctx.CollectionStopped
-			end)
-			if not entered then return false, reason end
-		end
-	end
 	local started, lastCommand, lastLog = os.clock(), -math.huge, -math.huge
 	local lastMoved, lastPosition = started, root.Position
 	local initialDistance = distanceXZ(root.Position, destination)
@@ -1607,6 +1587,7 @@ local function approachEgg(ctx, destination)
 					FusionModules.Helpers.formatPosition(destination), distance, now - started)
 				move(destination, {Radius = ctx.preciseRadius or CONFIG.PreciseArrivalRadius, Flat = true, ArrivalPosition = eggPosition})
 			end
+			FusionModules.Helpers.DriveBetaOnGround(ctx, humanoid, root, destination, lastMoved)
 			if now - lastLog >= CONFIG.ProgressInterval then
 				lastLog = now
 				log("MOVE_PROGRESS", "Phase=APPROACH Pos=%s DistanceXZ=%.2f WalkSpeed=%.1f VitesseReelle=%.1f Temps=%.2fs",
@@ -1829,44 +1810,9 @@ local function recoverSameEgg(ctx)
 	return false, "annule"
 end
 
-function FusionModules.Helpers.TryBetaReturn(ctx, destination, root)
-	if not ctx.betaMovement or ctx.betaReturnTried or ctx.help or ctx.CollectionStopped or ctx.watchForReappearance then return false end
-	if not validCycle(ctx) or motionBlockReason(ctx) or isSafe(root.Position) == true or isSafe(destination) ~= true then return false end
-	local carry = readCarry()
-	if not carry or not carry.IsCarrying or carry.Uid ~= ctx.uid then return false end
-
-	ctx.betaReturnTried = true
-	local origin = root.CFrame
-	stopMovement(true)
-	root.CFrame = CFrame.new(destination) * origin.Rotation
-	local deadline = os.clock() + 0.75
-	log("BETA_RETURN", "Retour direct tente | UID=%s", ctx.uid)
-	repeat
-		RunService.Heartbeat:Wait()
-		if not validCycle(ctx) then return false end
-		local owned, source = claimEvidence(ctx)
-		if owned then
-			ctx.claimed, ctx.claimSource = true, source
-			log("BETA_RETURN", "Attribution confirmee | UID=%s Source=%s", ctx.uid, source)
-			return isSafe(root.Position) == true
-		end
-		if motionBlockReason(ctx) or (root.Position - destination).Magnitude > 12 then break end
-	until os.clock() >= deadline
-
-	carry = readCarry()
-	if carry and carry.IsCarrying and carry.Uid == ctx.uid and not motionBlockReason(ctx)
-		and isSafe(root.Position) == true and (root.Position - destination).Magnitude <= 12 then
-		-- Re-cross the safe boundary on foot if the direct move did not register.
-		root.CFrame = origin
-	end
-	log("BETA_RETURN", "Attribution en attente | reprise du trajet normal UID=%s", ctx.uid)
-	return false
-end
-
 local function moveReturnLoop(ctx, destination)
 	local _, humanoid, root = getCharacterParts()
 	if not humanoid or not root then return false, "personnage absent" end
-	if FusionModules.Helpers.TryBetaReturn(ctx, destination, root) then return true end
 	local started, lastCommand, lastLog = os.clock(), -math.huge, -math.huge
 	local lastMoved, lastPosition = started, root.Position
 	local distance = distanceXZ(root.Position, destination)
@@ -1943,6 +1889,7 @@ local function moveReturnLoop(ctx, destination)
 			move(destination, {Radius = arrivalRadius})
 			lastCommand = now
 		end
+		FusionModules.Helpers.DriveBetaOnGround(ctx, humanoid, root, destination, lastMoved)
 		if now - lastLog >= CONFIG.ProgressInterval then
 			lastLog = now
 			log("MOVE_PROGRESS", "Phase=RETURN Pos=%s DistanceXZ=%.2f WalkSpeed=%.1f VitesseReelle=%.1f Safe=%s",
