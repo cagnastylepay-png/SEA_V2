@@ -628,8 +628,94 @@ return function(ctx)
   end)
   return true
  end
+ local function stopTrajectory(reason)
+  local capture=A.Trajectory
+  if not capture or capture.data.reason then return end
+  capture.data.reason=reason
+  capture.data.durationMs=math.floor((os.clock()-capture.start)*1000)
+  for _,connection in ipairs(capture.connections) do connection:Disconnect() end
+ end
+
+ local function startTrajectory()
+  assert(not A.Trajectory or A.Trajectory.data.reason,"Capture déjà active")
+  local character=assert(player.Character,"Personnage absent")
+  local root=assert(character:FindFirstChild("HumanoidRootPart"),"Position indisponible")
+  local humanoid=assert(character:FindFirstChildOfClass("Humanoid"),"Humanoid absent")
+  local capture={start=os.clock(),connections={},data={version=1,startedAt=DateTime.now().UnixTimestampMillis,
+   placeId=tostring(game.PlaceId),jobId=game.JobId,sampleRate=30,samples={},events={}}}
+  A.Trajectory=capture
+  local function elapsed() return math.floor((os.clock()-capture.start)*1000) end
+  local function attach(signal,callback)
+   if signal then table.insert(capture.connections,signal:Connect(callback)) end
+  end
+  local function mark(kind,value)
+   if #capture.data.events<300 then table.insert(capture.data.events,{t=elapsed(),kind=kind,value=value}) end
+  end
+  local function vector(v) return {math.round(v.X*100)/100,math.round(v.Y*100)/100,math.round(v.Z*100)/100} end
+  local lastZone,lastCarry,lastSample
+  local lastUpdate,lastEvent,maxStep=0,0,0
+  local previousPosition
+  local function sample(t)
+   local p=root.Position
+   if previousPosition then maxStep=math.max(maxStep,(p-previousPosition).Magnitude) end
+   previousPosition=p
+   local zone=ctx.TraceSafe and ctx.TraceSafe(p)
+   local carry=safe(A.EggState.ReadCarryState)
+   local uid=type(carry)=="table" and type(carry.Uid)=="string" and carry.Uid:sub(1,128) or nil
+   local carrying=type(carry)=="table" and carry.IsCarrying==true
+   if zone~=lastZone then lastZone=zone;mark("safe-zone",zone) end
+   if carrying~=lastCarry then lastCarry=carrying;mark("carrying",carrying) end
+   table.insert(capture.data.samples,{t=t,p=vector(p),v=vector(root.AssemblyLinearVelocity),
+    look=vector(root.CFrame.LookVector),move=vector(humanoid.MoveDirection),speed=humanoid.WalkSpeed,
+    floor=humanoid.FloorMaterial.Name,state=humanoid:GetState().Name,anchored=root.Anchored,safe=zone,carrying=carrying,uid=uid})
+   lastSample=t
+  end
+  sample(0)
+  attach(humanoid.StateChanged,function(_,state) mark("humanoid.state",state.Name) end)
+  attach(humanoid.MoveToFinished,function(reached) mark("moveTo.finished",reached) end)
+  attach(humanoid:GetPropertyChangedSignal("WalkToPoint"),function() mark("moveTo.point",vector(humanoid.WalkToPoint)) end)
+  attach(root:GetPropertyChangedSignal("Anchored"),function() mark("root.anchored",root.Anchored) end)
+  attach(A.EggState.CarryChanged,function(state)
+   if type(state)=="table" then mark("egg.carry",{active=state.IsCarrying==true,uid=type(state.Uid)=="string" and state.Uid:sub(1,128) or nil}) end
+  end)
+  attach(A.EggState.FieldClaimed,function(payload)
+   local uid=type(payload)=="table" and (payload.Uid or payload.uid or payload.FieldUid)
+   mark("egg.claimed",type(uid)=="string" and uid:sub(1,128) or nil)
+  end)
+  local function observeTween(instance)
+   if not instance:IsA("TweenBase") then return end
+   local name=instance.Name:sub(1,100)
+   mark("tween.observed",name)
+   attach(instance:GetPropertyChangedSignal("PlaybackState"),function()
+    mark("tween.state",{name=name,state=instance.PlaybackState.Name})
+   end)
+   attach(instance.Completed,function(state) mark("tween.completed",{name=name,state=state.Name}) end)
+  end
+  for _,instance in ipairs(character:GetDescendants()) do observeTween(instance) end
+  attach(character.DescendantAdded,observeTween)
+  attach(player.CharacterRemoving,function() stopTrajectory("character-removed") end)
+  attach(game:GetService("RunService").Heartbeat,function()
+   local t=elapsed()
+   if t>=45000 or not root.Parent then stopTrajectory(t>=45000 and "timeout" or "root-removed");return end
+   if t-lastSample>=33 then sample(t) end
+   if t-lastUpdate>=1500 then
+    local events={}
+    for i=lastEvent+1,#capture.data.events do table.insert(events,capture.data.events[i]) end
+    lastEvent=#capture.data.events
+    send({version=1,type="admin.trajectory.progress",startedAt=capture.data.startedAt,
+     count=#capture.data.samples,maxStep=math.round(maxStep*100)/100,
+     sample=capture.data.samples[#capture.data.samples],events=events})
+    lastUpdate=t
+   end
+  end)
+ end
+
  function A.Execute(m)
-  if m.action=="images.collect"then
+  if m.action=="trajectory.start" then startTrajectory();return true
+  elseif m.action=="trajectory.stop" then
+   assert(A.Trajectory,"Aucune capture disponible")
+   stopTrajectory("manual");return true
+  elseif m.action=="images.collect"then
    local images={};for category,config in pairs(A.Assets.Directory)do
     if type(category)=="string"and type(config)=="table"then local entry=catalogImage(category,config);if entry.eggImageAssetId or entry.animalImageAssetId then table.insert(images,entry)end end
    end
@@ -681,7 +767,8 @@ return function(ctx)
   local lock={requestId=m.requestId};shared.__SEAAdminRequestLock=lock
   task.spawn(function()
    A.Dispatched=false
-   local inventoryAction=not A.Fishing and m.action~="settings.update"and m.action~="automation.set"and m.action~="fishing.set"and m.action~="images.collect"
+   local diagnostic=m.action=="trajectory.start" or m.action=="trajectory.stop"
+   local inventoryAction=not diagnostic and not A.Fishing and m.action~="settings.update"and m.action~="automation.set"and m.action~="fishing.set"and m.action~="images.collect"
    local ok,confirmed=pcall(function()
     if inventoryAction and ctx.BeginManual then
      A.ManualPending=true
@@ -691,19 +778,22 @@ return function(ctx)
     return A.Execute(m)
    end)
    A.ManualPending=false
-   releaseMutationTool()
-   ctx.MutationLock(false)
+   if not diagnostic then releaseMutationTool();ctx.MutationLock(false) end
    if inventoryAction and ctx.EndManual then ctx.EndManual()end
    local result={version=1,type="admin.command.result",requestId=m.requestId,
     status=ok and confirmed and"confirmed"or(A.Dispatched and"unknown"or"rejected"),
     message=ok and confirmed and(m.action=="egg.mutate"and A.MutationStatus or m.action=="automation.set"and (m.enabled and "AUTO activé" or "Arrêt AUTO confirmé") or"Action confirmee par le jeu")or tostring(ok and"Confirmation en attente : aucune relance automatique"or confirmed):sub(1,500)}
+   local capture=ok and confirmed and m.action=="trajectory.stop" and A.Trajectory
+   if ok and confirmed and m.action=="trajectory.start" then result.message="Capture démarrée pour 45 s maximum" end
+   if capture then result.message="Capture prête à télécharger" end
    A.Seen[m.requestId]=result;A.SeenOrder=A.SeenOrder or{};table.insert(A.SeenOrder,m.requestId)
    if #A.SeenOrder>100 then A.Seen[table.remove(A.SeenOrder,1)]=nil end
    A.Busy=false;if shared.__SEAAdminRequestLock==lock then shared.__SEAAdminRequestLock=nil end
-   send(result);pcall(A.Publish,true)
+   if capture then result=table.clone(result);result.trajectory=capture.data end
+   send(result);if not diagnostic then pcall(A.Publish,true) end
   end)
  end
- function A.Destroy()A.Destroyed=true;if A.Fishing then stopFishing()end;if A.IndexRewards then A.IndexRewards.Destroy()end;releaseMutationTool();for _,c in ipairs(A.Connections or{})do c:Disconnect()end;if not ctx.LocalOnly then ctx.Report.AdminReceive=nil end end
+ function A.Destroy()stopTrajectory("admin-closed");A.Destroyed=true;if A.Fishing then stopFishing()end;if A.IndexRewards then A.IndexRewards.Destroy()end;releaseMutationTool();for _,c in ipairs(A.Connections or{})do c:Disconnect()end;if not ctx.LocalOnly then ctx.Report.AdminReceive=nil end end
  if not ctx.LocalOnly then ctx.Report.AdminReceive=A.Receive end
  task.spawn(function()
   while not A.Destroyed and not ctx.Ready()do task.wait(.5)end
