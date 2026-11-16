@@ -96,6 +96,7 @@ function FusionModules.Helpers.InIncomeRange(key,rate)
 end
 
 FusionModules.Options.AutoSkyfall=false
+FusionModules.Options.AutoStormGlass=false
 FusionModules.Options.AutoSlickRick=false
 FusionModules.Options.AutoStormRush=false
 FusionModules.Options.AutoPlotUpgrade=false
@@ -404,7 +405,7 @@ local function loadSettings()
 		minimumRatePerSecond = minimum * 1e9
 	end
  for key,value in pairs(FusionModules.Options)do
-  if type(value)=="boolean"and key~="AutoCosmicEclipse"and key~="AutoSkyfall"and key~="AutoStormRush"and key~="AutoSlickRick"and key~="AutoPlotUpgrade"and key~="AutoTreadmillUpgrade"and key~="AutoHelp"and key~="AutoMutations"and key~="AutoSellAnimals"and not key:match("^Mutation")then FusionModules.Options[key]=automaticMode end
+  if type(value)=="boolean"and key~="AutoCosmicEclipse"and key~="AutoSkyfall"and key~="AutoStormGlass"and key~="AutoStormRush"and key~="AutoSlickRick"and key~="AutoPlotUpgrade"and key~="AutoTreadmillUpgrade"and key~="AutoHelp"and key~="AutoMutations"and key~="AutoSellAnimals"and not key:match("^Mutation")then FusionModules.Options[key]=automaticMode end
  end
  FusionModules.Options.AutoEggsMin=minimumRatePerSecond
  FusionModules.Options.AutoSellMax=minimumRatePerSecond
@@ -3728,7 +3729,7 @@ end
 FusionModules.Skyfall={RetryAt=0, Tags=game:GetService("CollectionService")}
 
 function FusionModules.Skyfall.Rocks()
- if FusionModules.Reporting.ClientKind~="admin" or not FusionModules.Options.AutoSkyfall then return nil end
+ if FusionModules.Reporting.ClientKind~="admin" or not (FusionModules.Options.AutoSkyfall or FusionModules.Options.AutoStormGlass) then return nil end
  local folder=Workspace:FindFirstChild("StormheartRockfallLocal")
  local rocks=folder and folder:FindFirstChild("Rocks")
  if rocks and #rocks:GetChildren()>0 then return rocks end
@@ -3745,19 +3746,28 @@ function FusionModules.Skyfall.IsInfused(rock)
  return rock:GetAttribute("StormheartInfused")==true or rock:FindFirstChild("InfusedFx")~=nil
 end
 
+function FusionModules.Skyfall.CanTarget(rock)
+ local sky=FusionModules.Skyfall
+ local health=rock:GetAttribute("Health")
+ if not rock:IsA("BasePart") or type(health)~="number" or health<=0
+  or not sky.Tags:HasTag(rock,"BatAutoSwing") then return false end
+ if sky.IsInfused(rock) then return FusionModules.Options.AutoStormGlass end
+ return FusionModules.Options.AutoSkyfall
+end
+
 function FusionModules.Skyfall.SelectRock(rocks,position,skipped)
  local sky=FusionModules.Skyfall
- local target,nearest
+ local target,nearest,bestInfused
  local now=os.clock()
  for _,rock in ipairs(rocks:GetChildren())do
-  local health=rock:GetAttribute("Health")
   local retry=skipped and skipped[rock]
-  if rock:IsA("BasePart") and type(health)=="number" and health>0
-   and sky.Tags:HasTag(rock,"BatAutoSwing") and sky.IsInfused(rock)
-   and (not retry or now>=retry) then
+  if sky.CanTarget(rock) and (not retry or now>=retry) then
    if not position then return rock end
+   local infused=sky.IsInfused(rock)
    local distance=distanceXZ(position,rock.Position)
-   if not target or distance<nearest then target,nearest=rock,distance end
+   if not target or (infused and not bestInfused) or (infused==bestInfused and distance<nearest) then
+    target,nearest,bestInfused=rock,distance,infused
+   end
   end
  end
  return target
@@ -3959,12 +3969,10 @@ function FusionModules.Skyfall.Run(token)
     if previous and previous~=bat and backpack and previous.Parent==character then previous.Parent=backpack end
     sky.EquippedBat=bat
    end
-   setStatus("Skyfall · trajet vers un rocher infusé")
+   local infused=sky.IsInfused(target)
+   setStatus(infused and "StormGlass · trajet vers un rocher infusé" or "Skyfall · trajet vers un rocher normal")
    local function targetActive()
-    local health=target:GetAttribute("Health")
-    if not active() or target.Parent~=rocks or type(health)~="number" or health<=0
-     or not sky.Tags:HasTag(target,"BatAutoSwing") then return false end
-    return sky.IsInfused(target)
+    return active() and target.Parent==rocks and sky.CanTarget(target)
    end
    sky.MoveValid=targetActive
    local point=target.Position
