@@ -5668,6 +5668,7 @@ shared.__AutoSAEController = {Destroy = destroy, Gui = gui, Reporting = FusionMo
   Report=FusionModules.Reporting,
   SetRuntime=function(runtime)FusionModules.AdminRuntime=runtime end,
   Ready=function()return ready and not destroyed end,
+  TraceSafe=isSafe,
   GetOptions=function()return table.clone(FusionModules.Options)end,
   BiomeChoices=FusionModules.Helpers.BiomeChoices,
   InventoryNotice=function(text)FusionModules.InventoryNotice=tostring(text):sub(1,500)end,
