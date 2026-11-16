@@ -12,7 +12,6 @@ do
   end
  end
 end
-print("[Auto_SAE] Build reporting-v4-all-eggs")
 -- Auto_SAE v2.8. SellPrompt selection UI. Verified client contracts; no character/anticheat replacement.
 -- The live game must provide ReplicatedStorage.Client/Data/Shared.
 -- Refresh outbound MoveTo before its native timeout; verify distance before carry.
@@ -56,7 +55,7 @@ local EggState, Assets, EggRecords, AssetEarnings, SlotIdentity, GuardGeometry, 
 local ready, destroyed, autoEnabled = false, false, false
 local generation = 0
 local minimumRatePerSecond = DEFAULT_BILLIONS * 1e9
-local records, loggedVersions, cooldowns = {}, {}, {}
+local records, cooldowns = {}, {}
 local trackedEggs = {}
 local lifetimeConnections = {}
 local currentCycle, safeHome
@@ -343,9 +342,7 @@ local function log(stage, message, ...)
 	table.insert(debugLogLines, line)
 	table.insert(pendingLogLines, line)
 	if #debugLogLines > 1000 then table.remove(debugLogLines, 1) end
-	print(line)
-	local saved, failure = executorTools.SaveLog()
-	if not saved and executorFunction("writefile") then warn("[Auto_SAE] Sauvegarde log : "..tostring(failure)) end
+	executorTools.SaveLog()
 end
 
 local function measureAction(_, action, ...)
@@ -415,7 +412,7 @@ local function loadSettings()
  FusionModules.Options.AutoPlaceMin=minimumRatePerSecond
  FusionModules.Options.AutoIndex=automaticMode and autoIncludeMissingIndex
  if type(settings.Settings)=="table"then
-  if not FusionModules.Helpers.RestoreOptions(settings.Settings)then warn("[Auto_SAE] Parametres invalides : valeurs migrees conservees")end
+  FusionModules.Helpers.RestoreOptions(settings.Settings)
  end
  autoIncludeMissingIndex=FusionModules.Options.AutoIndex
 	log("SETTINGS_LOADED", "Auto=%s Index=%s Minimum=%s B/s", tostring(automaticMode), tostring(autoIncludeMissingIndex), tostring(minimumRatePerSecond / 1e9))
@@ -888,13 +885,11 @@ local function getRatePerSecond(record)
 
 	local itemOk, itemData = pcall(EggRecords.ToAssetItemData, record)
 	if not itemOk then
-		warn("[Auto_SAE] Conversion impossible pour le revenu de", record.Uid, itemData)
 		return nil
 	end
 
 	local rateOk, rate = pcall(AssetEarnings.RatePerSecond, itemData)
 	if not rateOk or type(rate) ~= "number" then
-		warn("[Auto_SAE] Calcul du revenu impossible pour", record.Uid, rate)
 		return nil
 	end
 
@@ -1185,39 +1180,6 @@ function FusionModules.Helpers.mutationLabel(record)
 
 	return table.concat(record.Mutations, ", ")
 end
-
-function FusionModules.Helpers.versionKey(record)
-	return tostring(record and record.Version or 0)
-end
-
-function FusionModules.Helpers.logEgg(record)
-	if type(record) ~= "table" or type(record.Uid) ~= "string" then
-		return
-	end
-
-	local currentVersion = FusionModules.Helpers.versionKey(record)
-	if loggedVersions[record.Uid] == currentVersion then
-		return
-	end
-	loggedVersions[record.Uid] = currentVersion
-
-	local position = getRecordPosition(record)
-	local weight = getWeightKg(record)
-	local rate = getRatePerSecond(record)
-
-	print(string.format(
-		"[Auto_SAE][EGG] %s | %s | %s | %s | %s Kg | %s $/s | %s | %s",
-		record.Uid,
-		getAnimalName(record),
-		getRarityName(record),
-		tostring(record.AreaId or "Inconnu"),
-		weight and string.format("%.2f", weight) or "Inconnu",
-		rate and formatNumber(rate) or "Inconnu",
-		FusionModules.Helpers.mutationLabel(record),
-		position and FusionModules.Helpers.formatPosition(position) or "Inconnue"
-		))
-end
-
 
 function FusionModules.Helpers.ownerSnapshot()
 	local ok, inventory = pcall(EggState.ReadOwnerEggs, player.UserId)
@@ -2252,7 +2214,6 @@ local function ingest(record)
 		trackedEggs[record.Uid].Record=record
 		if record.CarrierUserId then trackedEggs[record.Uid].LastCarrier=record.CarrierUserId end
 	end
-	FusionModules.Helpers.logEgg(record)
 end
 
 local function snapshot(snapshotData)
@@ -2261,7 +2222,6 @@ local function snapshot(snapshotData)
 	for _, record in ipairs(snapshotData.Records) do
 		if type(record) == "table" and type(record.Uid) == "string" then
 			updated[record.Uid] = record
-			FusionModules.Helpers.logEgg(record)
 		end
 	end
 	records = updated
@@ -3736,7 +3696,6 @@ function FusionModules.Protect(label,callback,...)
  end,function(err) return debug.traceback(tostring(err),2) end))
  if not result[1] then
   log("ERROR","%s : %s",label,tostring(result[2]))
-  warn("[Auto_SAE]["..label.."] "..tostring(result[2]))
  end
  return table.unpack(result,1,result.n)
 end
@@ -4283,35 +4242,18 @@ do
   local sent={}
   local nextCollectAt=0
   local tierPriority={Golden=3,Purple=2,Blue=1}
-  local target
+  local direction=Vector3.zero
+  local rise=false
   local input="SEA_StormRush_"..tostring({})
-  RunService:BindToRenderStep(input,Enum.RenderPriority.Input.Value+1,function(dt)
-   humanoid:Move(Vector3.zero,false)
-   humanoid.Jump=false
-   if not target or not valid() or rush.Round~=round or not rush.Inside()
-    or player:GetAttribute(util.Attributes.Floating)~=true then return end
-   local now=Workspace:GetServerTimeNow()
-   if now>=round.EndsAt then return end
-
-   local position=root.Position
-   local sparkPosition=util.SparkPosition(target,center.Position,now)
-   local deltaY=sparkPosition.Y-position.Y
-   local verticalSpeed=deltaY>=0 and rush.Flags.FloatRiseSpeed:Get() or rush.Flags.FloatDescendSpeed:Get()
-   local step=math.clamp(deltaY,-verticalSpeed*dt,verticalSpeed*dt)
-   local nextPosition=position+Vector3.new(0,step,0)
-   local away=Vector3.new(position.X-sparkPosition.X,0,position.Z-sparkPosition.Z)
-   if away.Magnitude>0.001 then
-    root.CFrame=CFrame.lookAt(nextPosition,nextPosition+away)
-   else
-    root.CFrame=CFrame.new(nextPosition)*root.CFrame.Rotation
-   end
+  RunService:BindToRenderStep(input,Enum.RenderPriority.Input.Value+1,function()
+   humanoid:Move(direction,false)
+   humanoid.Jump=rise
   end)
   local ok,err=pcall(function()
    while valid() and rush.Round==round and rush.Inside() do
     local now=Workspace:GetServerTimeNow()
     if now>=round.EndsAt then break end
-    target=nil
-    local distance,priority
+    local target,distance,priority
     if player:GetAttribute(util.Attributes.Floating)==true then
      for _,spark in ipairs(candidates) do
       if now>=spark.Born+rush.Flags.SparkBurstFlySeconds:Get() and not sent[spark.Id] then
@@ -4324,10 +4266,20 @@ do
       end
      end
     end
-    if target and distance<=12 and now>=nextCollectAt then
-     rush.Remotes.Collect:FireServer(target.Id)
-     sent[target.Id]=true
-     nextCollectAt=Workspace:GetServerTimeNow()+1
+    direction,rise=Vector3.zero,false
+    if target then
+     local delta=util.SparkPosition(target,center.Position,now)-root.Position
+     if distance<=12 then
+      if now>=nextCollectAt then
+       rush.Remotes.Collect:FireServer(target.Id)
+       sent[target.Id]=true
+       nextCollectAt=Workspace:GetServerTimeNow()+1
+      end
+     else
+      local flat=delta*Vector3.new(1,0,1)
+      if flat.Magnitude>2 then direction=flat.Unit end
+      rise=delta.Y>2
+     end
     end
     task.wait(.08)
    end
@@ -5120,7 +5072,7 @@ local function initialize()
         FusionModules.Reporting.MarkDirty(.75)
     end)
 	connect(EggState.FieldGone, function(uid)
-		records[uid], loggedVersions[uid] = nil, nil
+		records[uid] = nil
         FusionModules.Reporting.MarkDirty(.75)
 		if trackedEggs[uid] then log("EGG_TRACK","UID=%s Retire du snapshot : suivi physique conserve",uid) end
 		log("FIELD_GONE", "UID=%s | ne prouve pas la possession", tostring(uid))
@@ -5804,13 +5756,11 @@ task.spawn(function()
 		task.wait(2)
 		if destroyed then break end
 		if executorFunction("writefile") then
-			local settingsOK, settingsError = executorTools.SaveSettings()
-			if not settingsOK then warn("[Auto_SAE] Ecriture parametres : " .. tostring(settingsError)) end
+			executorTools.SaveSettings()
 			if sequence ~= lastSavedLogSequence then
 				local sequenceToSave = sequence
-				local logOK, logError = executorTools.SaveLog()
-				if logOK then lastSavedLogSequence = sequenceToSave
-				else warn("[Auto_SAE] Ecriture logs : " .. tostring(logError)) end
+				local logOK = executorTools.SaveLog()
+				if logOK then lastSavedLogSequence = sequenceToSave end
 			end
 		end
 	end
