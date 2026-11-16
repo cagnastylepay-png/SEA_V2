@@ -4276,11 +4276,11 @@ do
     direction,rise=Vector3.zero,false
     if target then
      local delta=util.SparkPosition(target,center.Position,now)-root.Position
-     if distance<=rush.Flags.SparkCollectReach:Get() then
+     if distance<=2*rush.Flags.SparkCollectReach:Get() then
       if now>=nextCollectAt then
        rush.Remotes.Collect:FireServer(target.Id)
        sent[target.Id]=true
-       nextCollectAt=Workspace:GetServerTimeNow()+1
+       nextCollectAt=Workspace:GetServerTimeNow()+.5
       end
      else
       local flat=delta*Vector3.new(1,0,1)
