@@ -3735,30 +3735,29 @@ function FusionModules.Skyfall.Rocks()
 end
 
 function FusionModules.Skyfall.Available()
- return os.clock()>=FusionModules.Skyfall.RetryAt and FusionModules.Skyfall.Rocks()
+ local sky=FusionModules.Skyfall
+ if os.clock()<sky.RetryAt then return end
+ local rocks=sky.Rocks()
+ if rocks and sky.SelectRock(rocks) then return rocks end
 end
 
 function FusionModules.Skyfall.IsInfused(rock)
  return rock:GetAttribute("StormheartInfused")==true or rock:FindFirstChild("InfusedFx")~=nil
 end
 
-function FusionModules.Skyfall.SelectRock(rocks,position,skipped,infusedOnly)
- local tags=FusionModules.Skyfall.Tags
- local target,nearest,bestInfused
+function FusionModules.Skyfall.SelectRock(rocks,position,skipped)
+ local sky=FusionModules.Skyfall
+ local target,nearest
  local now=os.clock()
  for _,rock in ipairs(rocks:GetChildren())do
   local health=rock:GetAttribute("Health")
+  local retry=skipped and skipped[rock]
   if rock:IsA("BasePart") and type(health)=="number" and health>0
-   and tags:HasTag(rock,"BatAutoSwing") then
-   local infused=FusionModules.Skyfall.IsInfused(rock)
-   local retry=skipped[rock]
-   local eligible=not retry or retry.Infused~=infused or now>=retry.Until
-   if eligible and (not infusedOnly or infused) then
-    local distance=distanceXZ(position,rock.Position)
-    if not target or (infused and not bestInfused) or (infused==bestInfused and distance<nearest) then
-     target,nearest,bestInfused=rock,distance,infused
-    end
-   end
+   and sky.Tags:HasTag(rock,"BatAutoSwing") and sky.IsInfused(rock)
+   and (not retry or now>=retry) then
+   if not position then return rock end
+   local distance=distanceXZ(position,rock.Position)
+   if not target or distance<nearest then target,nearest=rock,distance end
   end
  end
  return target
@@ -3930,7 +3929,8 @@ function FusionModules.Skyfall.Run(token)
  local function active()
   return activityValid(token,character) and automaticMode and not stopAfterFlight
    and not serverHopPending and not FusionModules.CollectionReturnPending
-   and next(queuedEggs)==nil and sky.Rocks()~=nil and not FusionModules.SlickRick.Available()
+   and next(queuedEggs)==nil and sky.Available()~=nil and not FusionModules.SlickRick.Available()
+   and not FusionModules.StormRush.Available(true)
  end
  if player:GetAttribute("InAlienLagoon")==true then
   local runtime=FusionModules.AdminRuntime
@@ -3959,13 +3959,12 @@ function FusionModules.Skyfall.Run(token)
     if previous and previous~=bat and backpack and previous.Parent==character then previous.Parent=backpack end
     sky.EquippedBat=bat
    end
-   setStatus("Skyfall · trajet vers "..(sky.IsInfused(target) and "un rocher infusé" or target.Name))
+   setStatus("Skyfall · trajet vers un rocher infusé")
    local function targetActive()
     local health=target:GetAttribute("Health")
     if not active() or target.Parent~=rocks or type(health)~="number" or health<=0
      or not sky.Tags:HasTag(target,"BatAutoSwing") then return false end
     return sky.IsInfused(target)
-     or not sky.SelectRock(rocks,root.Position,skipped,true)
    end
    sky.MoveValid=targetActive
    local point=target.Position
@@ -4009,7 +4008,7 @@ function FusionModules.Skyfall.Run(token)
     if recovering then stopMovement(true) end
    end
    if targetActive() then
-    skipped[target]={Infused=sky.IsInfused(target),Until=os.clock()+2}
+    skipped[target]=os.clock()+2
    end
   else
    setStatus("Skyfall · attente d’un rocher disponible")
@@ -4055,12 +4054,17 @@ function FusionModules.StormRush.Bind(remotes)
  end)
 end
 
-function FusionModules.Helpers.TreadmillOnly()
- return FusionModules.Options.AutoTreadmill and next(queuedEggs)==nil
-  and not stopAfterFlight and not serverHopPending and not FusionModules.CollectionReturnPending
+function FusionModules.Helpers.CanStartIdleActivity()
+ return next(queuedEggs)==nil and not stopAfterFlight and not serverHopPending
+  and not FusionModules.CollectionReturnPending
   and not (FusionModules.RemoteHop and FusionModules.RemoteHop.Pending)
-  and not FusionModules.SlickRick.Available() and not FusionModules.Helpers.FishingMode()
-  and not FusionModules.Skyfall.Available() and not FusionModules.Butterflies.Available()
+  and not FusionModules.SlickRick.Available()
+end
+
+function FusionModules.Helpers.TreadmillOnly()
+ return FusionModules.Options.AutoTreadmill and FusionModules.Helpers.CanStartIdleActivity()
+  and not FusionModules.Helpers.FishingMode() and not FusionModules.Skyfall.Available()
+  and not FusionModules.Butterflies.Available()
 end
 
 do
@@ -4169,11 +4173,19 @@ do
   return rush.Util and player:GetAttribute(rush.Util.Attributes.Inside)==true
  end
 
- function rush.Available()
+ function rush.LiveEvent()
+  local state=rush.Util.State()
+  if state=="Charging" then return true end
+  if state~="Rush" then return false end
+  return not rush.IneligibleUntil or Workspace:GetServerTimeNow()>=rush.IneligibleUntil
+ end
+
+ function rush.Available(liveOnly)
   if not rush.Remotes or not FusionModules.Options.AutoStormRush or os.clock()<rush.RetryAt
-   or not FusionModules.Helpers.TreadmillOnly() then return false end
+   or not FusionModules.Helpers.CanStartIdleActivity() then return false end
   local util=rush.Util
-  local state=util.State()
+  local live=rush.LiveEvent()
+  if not live and (liveOnly or util.State()~="Idle" or not FusionModules.Helpers.TreadmillOnly()) then return false end
   if not rush.Inside() then
    local prompt,point=entrance()
    if not point or (not prompt and not util.Live()) then return false end
@@ -4181,9 +4193,8 @@ do
    local speed=profile().SpeedPower
    if type(required)=="number" and type(speed)=="number" and speed<required then return false end
   end
-  if state=="Charging" or (state=="Rush" and player:GetAttribute(util.Attributes.Eligible)==true) then return true end
-  if state=="Idle" and insertedGlass()>=1 then return true end
-  local needed=state=="Idle" and missingGlass() or 0
+  if live or insertedGlass()>=1 then return true end
+  local needed=missingGlass()
   local gear=profile().GearInventory
   return needed>0 and gear and (gear[util.GearId] or 0)>=needed
  end
@@ -4282,13 +4293,23 @@ do
   local character,humanoid,root=getCharacterParts()
   if not root or not rush.Available() then return end
   local util=rush.Util
+  local joiningLive=rush.LiveEvent()
   local function active()
    return activityValid(token,character) and automaticMode and FusionModules.Options.AutoStormRush
-    and FusionModules.Helpers.TreadmillOnly()
+    and FusionModules.Helpers.CanStartIdleActivity()
+    and (rush.LiveEvent() or (not joiningLive and FusionModules.Helpers.TreadmillOnly()))
+  end
+  if player:GetAttribute("InAlienLagoon")==true then
+   local runtime=FusionModules.AdminRuntime
+   if not runtime or not runtime.Initialized then return end
+   runtime.StopFishing()
+   setStatus("Storm Rush · retour du lagon")
+   local left,why=runtime.LeaveFishingLagoon()
+   if not left then error(tostring(why or "Sortie du lagon non confirmée"),0) end
   end
   local left,why=leaveTreadmill(token)
   if not left then error(why,0) end
-  if not active() or not rush.Available() then return end
+  if not active() or not rush.Available(joiningLive) then return end
   autoActivity="STORM_RUSH"
   rush.Managed=true
   if not rush.Inside() then
@@ -4369,7 +4390,7 @@ do
    return inventory and inventory[util.GearId] or 0
   end
   local function idle()
-   return active() and util.State()=="Idle"
+   return not joiningLive and active() and util.State()=="Idle"
   end
   local function tryInsert(attempt,needed,stock)
    local function changed()
@@ -4458,12 +4479,15 @@ do
   end
   if util.State()=="Charging" or util.State()=="Rush" then
    setStatus("Storm Rush · attente des Sparks")
-   waitFor(function()return rush.Round and rush.Round.Eligible==true end,20,function()
+   waitFor(function()return rush.Round~=nil end,20,function()
     local state=util.State()
     return active() and (state=="Charging" or state=="Rush")
    end)
    local round=rush.Round
-   if active() and round and round.Eligible==true then
+   if active() and round and round.Eligible==false then
+    rush.IneligibleUntil=round.EndsAt
+    setStatus("Storm Rush · le serveur indique que le joueur n’est pas éligible")
+   elseif active() and round and round.Eligible==true then
     setStatus("Storm Rush · collecte des Sparks")
     fly(round,map,humanoid,root,active)
     waitFor(function()return player:GetAttribute(util.Attributes.Floating)~=true end,5,active)
@@ -4560,7 +4584,7 @@ function FusionModules.Helpers.FishingIdle(token)
   local selected,rate=selectBest()
   if selected then FusionModules.Helpers.RequestFishingEgg(selected,rate)
   elseif FusionModules.RemoteHop.LocalReturnTarget then FusionModules.Helpers.ReturnForFishingEgg()
-  elseif FusionModules.SlickRick.Available() or FusionModules.Skyfall.Available() then break
+  elseif FusionModules.SlickRick.Available() or FusionModules.StormRush.Available(true) or FusionModules.Skyfall.Available() then break
   end
   task.wait(.1)
  end
@@ -4840,6 +4864,8 @@ local function worker(token)
 			directNext = false
 			if automaticMode and FusionModules.SlickRick.Available() then
                 FusionModules.SlickRick.Idle(token)
+            elseif automaticMode and FusionModules.StormRush.Available(true) then
+                FusionModules.StormRush.Idle(token)
             elseif automaticMode and FusionModules.Skyfall.Available() then
                 FusionModules.Skyfall.Idle(token)
             elseif automaticMode and FusionModules.Helpers.FishingMode() then
@@ -5645,7 +5671,7 @@ shared.__AutoSAEController = {Destroy = destroy, Gui = gui, Reporting = FusionMo
   end,
   MoveForFishing=FusionModules.Helpers.MoveForFishing,
   FishingTravelValid=function()return not destroyed and automaticMode and autoEnabled and not queuePaused and not stopAfterFlight and not serverHopPending end,
-  FishingAutomaticValid=function()return not destroyed and automaticMode and autoEnabled and not queuePaused and not stopAfterFlight and not serverHopPending and FusionModules.Helpers.FishingMode() and not FusionModules.SlickRick.Available() and not FusionModules.Skyfall.Available()end,
+  FishingAutomaticValid=function()return not destroyed and automaticMode and autoEnabled and not queuePaused and not stopAfterFlight and not serverHopPending and FusionModules.Helpers.FishingMode() and not FusionModules.SlickRick.Available() and not FusionModules.StormRush.Available(true) and not FusionModules.Skyfall.Available()end,
   CanUpdateSettings=function(revision)
    local report=FusionModules.Reporting
    if type(revision)~="number" or revision>report.SettingsRevision or revision<(report.OptionsChangedRevision or 1) or not report.LastOptions then return false end
