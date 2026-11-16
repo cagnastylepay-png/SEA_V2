@@ -97,6 +97,7 @@ end
 
 FusionModules.Options.AutoSkyfall=false
 FusionModules.Options.AutoStormGlass=false
+FusionModules.Options.BetaMovement=false
 FusionModules.Options.AutoSlickRick=false
 FusionModules.Options.AutoStormRush=false
 FusionModules.Options.AutoPlotUpgrade=false
@@ -405,7 +406,7 @@ local function loadSettings()
 		minimumRatePerSecond = minimum * 1e9
 	end
  for key,value in pairs(FusionModules.Options)do
-  if type(value)=="boolean"and key~="AutoCosmicEclipse"and key~="AutoSkyfall"and key~="AutoStormGlass"and key~="AutoStormRush"and key~="AutoSlickRick"and key~="AutoPlotUpgrade"and key~="AutoTreadmillUpgrade"and key~="AutoHelp"and key~="AutoMutations"and key~="AutoSellAnimals"and not key:match("^Mutation")then FusionModules.Options[key]=automaticMode end
+  if type(value)=="boolean"and key~="AutoCosmicEclipse"and key~="AutoSkyfall"and key~="AutoStormGlass"and key~="BetaMovement"and key~="AutoStormRush"and key~="AutoSlickRick"and key~="AutoPlotUpgrade"and key~="AutoTreadmillUpgrade"and key~="AutoHelp"and key~="AutoMutations"and key~="AutoSellAnimals"and not key:match("^Mutation")then FusionModules.Options[key]=automaticMode end
  end
  FusionModules.Options.AutoEggsMin=minimumRatePerSecond
  FusionModules.Options.AutoSellMax=minimumRatePerSecond
@@ -1787,9 +1788,44 @@ local function recoverSameEgg(ctx)
 	return false, "annule"
 end
 
+function FusionModules.Helpers.TryBetaReturn(ctx, destination, root)
+	if not ctx.betaMovement or ctx.betaReturnTried or ctx.help or ctx.CollectionStopped or ctx.watchForReappearance then return false end
+	if not validCycle(ctx) or motionBlockReason(ctx) or isSafe(root.Position) == true or isSafe(destination) ~= true then return false end
+	local carry = readCarry()
+	if not carry or not carry.IsCarrying or carry.Uid ~= ctx.uid then return false end
+
+	ctx.betaReturnTried = true
+	local origin = root.CFrame
+	stopMovement(true)
+	root.CFrame = CFrame.new(destination) * origin.Rotation
+	local deadline = os.clock() + 0.75
+	log("BETA_RETURN", "Retour direct tente | UID=%s", ctx.uid)
+	repeat
+		RunService.Heartbeat:Wait()
+		if not validCycle(ctx) then return false end
+		local owned, source = claimEvidence(ctx)
+		if owned then
+			ctx.claimed, ctx.claimSource = true, source
+			log("BETA_RETURN", "Attribution confirmee | UID=%s Source=%s", ctx.uid, source)
+			return isSafe(root.Position) == true
+		end
+		if motionBlockReason(ctx) or (root.Position - destination).Magnitude > 12 then break end
+	until os.clock() >= deadline
+
+	carry = readCarry()
+	if carry and carry.IsCarrying and carry.Uid == ctx.uid and not motionBlockReason(ctx)
+		and isSafe(root.Position) == true and (root.Position - destination).Magnitude <= 12 then
+		-- Re-cross the safe boundary on foot if the direct move did not register.
+		root.CFrame = origin
+	end
+	log("BETA_RETURN", "Attribution en attente | reprise du trajet normal UID=%s", ctx.uid)
+	return false
+end
+
 local function moveReturnLoop(ctx, destination)
 	local _, humanoid, root = getCharacterParts()
 	if not humanoid or not root then return false, "personnage absent" end
+	if FusionModules.Helpers.TryBetaReturn(ctx, destination, root) then return true end
 	local started, lastCommand, lastLog = os.clock(), -math.huge, -math.huge
 	local lastMoved, lastPosition = started, root.Position
 	local distance = distanceXZ(root.Position, destination)
@@ -2109,6 +2145,7 @@ local function runCycle(record, rate, recovering, findNext)
  if help and not helpDestination then return false,"Centre Forest introuvable"end
  local ctx = {
   flightReason=flightReason,flightRate=rate,
+  betaMovement=FusionModules.Reporting.ClientKind=="admin" and FusionModules.Options.BetaMovement==true,
   help=help,CollectionStopped=FusionModules.CollectionReturnPending==true,
 		uid = record.Uid, record = record, generation = generation, character = character, findNext = findNext,
 		startedAt = os.clock(), phaseStartedAt = os.clock(),
