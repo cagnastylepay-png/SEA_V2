@@ -4336,18 +4336,35 @@ do
   local sent={}
   local nextCollectAt=0
   local tierPriority={Golden=3,Purple=2,Blue=1}
-  local direction=Vector3.zero
-  local rise=false
+  local target
   local input="SEA_StormRush_"..tostring({})
-  RunService:BindToRenderStep(input,Enum.RenderPriority.Input.Value+1,function()
-   humanoid:Move(direction,false)
-   humanoid.Jump=rise
+  RunService:BindToRenderStep(input,Enum.RenderPriority.Input.Value+1,function(dt)
+   humanoid:Move(Vector3.zero,false)
+   humanoid.Jump=false
+   if not target or not valid() or rush.Round~=round or not rush.Inside()
+    or player:GetAttribute(util.Attributes.Floating)~=true then return end
+   local now=Workspace:GetServerTimeNow()
+   if now>=round.EndsAt then return end
+
+   local position=root.Position
+   local sparkPosition=util.SparkPosition(target,center.Position,now)
+   local deltaY=sparkPosition.Y-position.Y
+   local verticalSpeed=deltaY>=0 and rush.Flags.FloatRiseSpeed:Get() or rush.Flags.FloatDescendSpeed:Get()
+   local step=math.clamp(deltaY,-verticalSpeed*dt,verticalSpeed*dt)
+   local nextPosition=position+Vector3.new(0,step,0)
+   local away=Vector3.new(position.X-sparkPosition.X,0,position.Z-sparkPosition.Z)
+   if away.Magnitude>0.001 then
+    root.CFrame=CFrame.lookAt(nextPosition,nextPosition+away)
+   else
+    root.CFrame=CFrame.new(nextPosition)*root.CFrame.Rotation
+   end
   end)
   local ok,err=pcall(function()
    while valid() and rush.Round==round and rush.Inside() do
     local now=Workspace:GetServerTimeNow()
     if now>=round.EndsAt then break end
-    local target,distance,priority
+    target=nil
+    local distance,priority
     if player:GetAttribute(util.Attributes.Floating)==true then
      for _,spark in ipairs(candidates) do
       if now>=spark.Born+rush.Flags.SparkBurstFlySeconds:Get() and not sent[spark.Id] then
@@ -4360,20 +4377,10 @@ do
       end
      end
     end
-    direction,rise=Vector3.zero,false
-    if target then
-     local delta=util.SparkPosition(target,center.Position,now)-root.Position
-     if distance<=2*rush.Flags.SparkCollectReach:Get() then
-      if now>=nextCollectAt then
-       rush.Remotes.Collect:FireServer(target.Id)
-       sent[target.Id]=true
-       nextCollectAt=Workspace:GetServerTimeNow()+.5
-      end
-     else
-      local flat=delta*Vector3.new(1,0,1)
-      if flat.Magnitude>2 then direction=flat.Unit end
-      rise=delta.Y>2
-     end
+    if target and distance<=12 and now>=nextCollectAt then
+     rush.Remotes.Collect:FireServer(target.Id)
+     sent[target.Id]=true
+     nextCollectAt=Workspace:GetServerTimeNow()+1
     end
     task.wait(.08)
    end
