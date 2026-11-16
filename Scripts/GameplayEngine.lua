@@ -1472,10 +1472,50 @@ local function followTakenEgg(ctx)
 	return false,"annule"
 end
 
+function FusionModules.Helpers.TryBetaApproach(ctx, root, destination)
+	if not ctx.betaMovement or ctx.betaApproachTried or ctx.help or ctx.CollectionStopped then return false end
+	if not validCycle(ctx) or motionBlockReason(ctx) or not FusionModules.Helpers.GameplayEntryAllowed() then return false end
+	if isSafe(root.Position) ~= false or isSafe(destination) ~= false then return false end
+	if distanceXZ(root.Position, destination) <= CONFIG.ApproachDistance then return false end
+
+	local latest, readOK = readField(ctx.uid)
+	local eggPosition = getRecordPosition(latest)
+	if not readOK or not eggPosition or (latest.State ~= SLOT_STATE and latest.State ~= "Dropped") then return false end
+	-- Use the same height as the walking approach and leave room below the pickup limit.
+	local target = Vector3.new(eggPosition.X, destination.Y, eggPosition.Z)
+	if (target - eggPosition).Magnitude >= CONFIG.ApproachDistance or isSafe(target) ~= false then return false end
+
+	ctx.betaApproachTried = true
+	stopMovement(true)
+	root.CFrame = CFrame.new(target) * root.CFrame.Rotation
+	log("BETA_APPROACH", "Approche directe tentee | UID=%s", ctx.uid)
+
+	local deadline = os.clock() + 0.2
+	repeat
+		RunService.Heartbeat:Wait()
+		if not validCycle(ctx) or ctx.CollectionStopped then return true end
+		if motionBlockReason(ctx) or (root.Position - target).Magnitude >= CONFIG.ApproachDistance then
+			log("BETA_APPROACH", "Position corrigee ou mouvement interrompu | UID=%s", ctx.uid)
+			return true
+		end
+	until os.clock() >= deadline
+	return true
+end
+
 local function approachEgg(ctx, destination)
 	local _, humanoid, root = getCharacterParts()
 	if not humanoid or not root then return false, "personnage absent" end
 	setPhase(ctx, "APPROACH", "Course vers : " .. getAnimalName(ctx.record))
+	if FusionModules.Helpers.TryBetaApproach(ctx, root, destination) then
+		if not validCycle(ctx) then return false, "annule" end
+		if ctx.CollectionStopped then return false, "COLLECTION_STOPPED" end
+		if not FusionModules.Helpers.GameplayEntryAllowed() then
+			local entered, reason = FusionModules.Helpers.EnterGameplay(ctx.generation, function()
+				return validCycle(ctx) and not ctx.CollectionStopped
+			end)
+			if not entered then return false, reason end
+		end
+	end
 	local started, lastCommand, lastLog = os.clock(), -math.huge, -math.huge
 	local lastMoved, lastPosition = started, root.Position
 	local initialDistance = distanceXZ(root.Position, destination)
