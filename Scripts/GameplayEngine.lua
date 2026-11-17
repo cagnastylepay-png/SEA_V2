@@ -4241,6 +4241,7 @@ do
   end
   local sent={}
   local nextCollectAt=0
+  local tierPriority={Golden=3,Purple=2,Blue=1}
   local direction=Vector3.zero
   local rise=false
   local input="SEA_StormRush_"..tostring({})
@@ -4252,14 +4253,15 @@ do
    while valid() and rush.Round==round and rush.Inside() do
     local now=Workspace:GetServerTimeNow()
     if now>=round.EndsAt then break end
-    local target,distance
+    local target,distance,priority
     if player:GetAttribute(util.Attributes.Floating)==true then
      for _,spark in ipairs(candidates) do
       if now>=spark.Born+rush.Flags.SparkBurstFlySeconds:Get() and not sent[spark.Id] then
        local delta=util.SparkPosition(spark,center.Position,now)-root.Position
        local length=delta.Magnitude
-       if not distance or length<distance then
-        target,distance=spark,length
+       local rank=tierPriority[spark.Tier] or 1
+       if not priority or rank>priority or (rank==priority and length<distance) then
+        target,distance,priority=spark,length,rank
        end
       end
      end
