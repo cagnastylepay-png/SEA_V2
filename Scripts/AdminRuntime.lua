@@ -1,6 +1,6 @@
 -- Typed Render bridge. No GUI, arbitrary code commands or observer automation.
 return function(ctx)
- local A={Destroyed=false,Busy=false,Revision=0,Seen={},Session=ctx.Report.SessionId}
+ local A={Destroyed=false,Busy=false,Revision=0,Seen={},Session=ctx.Report.SessionId,MovementSettings={stepStuds=2,intervalMs=80}}
  local player=game:GetService("Players").LocalPlayer
  local RS=game:GetService("ReplicatedStorage")
  local Http=game:GetService("HttpService")
@@ -710,7 +710,14 @@ return function(ctx)
   end)
  end
 
+ function A.UpdateMovementSettings(m)
+  assert(type(m.stepStuds)=="number"and m.stepStuds==m.stepStuds and m.stepStuds>0 and m.stepStuds<math.huge,"Distance de saut invalide")
+  assert(type(m.intervalMs)=="number"and m.intervalMs>=1 and m.intervalMs<=9007199254740991 and m.intervalMs%1==0,"Intervalle invalide")
+  A.MovementSettings.stepStuds=m.stepStuds
+  A.MovementSettings.intervalMs=m.intervalMs
+ end
  function A.Execute(m)
+  if m.action=="movement.test.update"then A.UpdateMovementSettings(m);return true end
   if m.action=="movement.test.stop"then
    if A.MovementTest then A.MovementTest.Cancelled=true end
    return true
@@ -718,6 +725,7 @@ return function(ctx)
    assert(not A.MovementTest,"Un test est déjà en cours")
    assert(not A.Fishing,"Arrête AutoFishing avant le test")
    assert(type(ctx.TestMoveFarthest)=="function","Recharge Admin.lua pour activer le test")
+   if m.stepStuds~=nil or m.intervalMs~=nil then A.UpdateMovementSettings(m)end
    ctx.SetEnabled(false)
    local run={};A.MovementTest=run
    task.defer(function()
@@ -731,7 +739,7 @@ return function(ctx)
      end
      if not valid()then return "Test · déplacement arrêté" end
      ctx.InventoryNotice("Test · déplacement vers l'oeuf le plus éloigné")
-     return ctx.TestMoveFarthest(function()return valid()and ctx.ManualCanContinue()end)
+     return ctx.TestMoveFarthest(function()return valid()and ctx.ManualCanContinue()end,A.MovementSettings)
     end)
     if acquired then ctx.EndManual()end
     if A.MovementTest==run then A.MovementTest=nil end
@@ -799,7 +807,7 @@ return function(ctx)
   local lock={requestId=m.requestId};shared.__SEAAdminRequestLock=lock
   task.spawn(function()
    A.Dispatched=false
-   local diagnostic=m.action=="trajectory.start" or m.action=="trajectory.stop" or m.action=="movement.test.start" or m.action=="movement.test.stop"
+   local diagnostic=m.action=="trajectory.start" or m.action=="trajectory.stop" or m.action=="movement.test.start" or m.action=="movement.test.stop" or m.action=="movement.test.update"
    local inventoryAction=not diagnostic and not A.Fishing and m.action~="settings.update"and m.action~="automation.set"and m.action~="fishing.set"and m.action~="images.collect"
    local ok,confirmed=pcall(function()
     if inventoryAction and ctx.BeginManual then
@@ -817,7 +825,9 @@ return function(ctx)
     message=ok and confirmed and(m.action=="egg.mutate"and A.MutationStatus or m.action=="automation.set"and (m.enabled and "AUTO activé" or "Arrêt AUTO confirmé") or"Action confirmee par le jeu")or tostring(ok and"Confirmation en attente : aucune relance automatique"or confirmed):sub(1,500)}
    local capture=ok and confirmed and m.action=="trajectory.stop" and A.Trajectory
    if ok and confirmed and m.action=="trajectory.start" then result.message="Capture démarrée pour 45 s maximum" end
-   if ok and confirmed and m.action=="movement.test.start"then result.message="Test démarré · 2 studs toutes les 80 ms vers l'oeuf le plus éloigné"end
+   if ok and confirmed and(m.action=="movement.test.start"or m.action=="movement.test.update")then
+    result.message=(m.action=="movement.test.start"and"Test démarré · "or"Test · valeurs appliquées : ")..tostring(A.MovementSettings.stepStuds).." studs toutes les "..tostring(A.MovementSettings.intervalMs).." ms"
+   end
    if ok and confirmed and m.action=="movement.test.stop"then result.message="Test · arrêt demandé"end
    if capture then result.message="Capture prête à télécharger" end
    A.Seen[m.requestId]=result;A.SeenOrder=A.SeenOrder or{};table.insert(A.SeenOrder,m.requestId)

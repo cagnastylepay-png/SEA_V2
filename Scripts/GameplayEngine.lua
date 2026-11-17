@@ -5677,7 +5677,7 @@ shared.__AutoSAEController = {Destroy = destroy, Gui = gui, Reporting = FusionMo
   SetRuntime=function(runtime)FusionModules.AdminRuntime=runtime end,
   Ready=function()return ready and not destroyed end,
   TraceSafe=isSafe,
-  TestMoveFarthest=function(valid)
+  TestMoveFarthest=function(valid,settings)
    local character,humanoid,root=getCharacterParts()
    assert(character and humanoid and root,"Personnage absent")
    local target,furthest
@@ -5689,7 +5689,6 @@ shared.__AutoSAEController = {Destroy = destroy, Gui = gui, Reporting = FusionMo
     end
    end
    assert(target,"Aucun oeuf disponible sur ce serveur")
-   local deadline=os.clock()+math.min(600,furthest/25+30)
    humanoid:Move(Vector3.zero,false)
    humanoid.Jump=false
    while valid()and character.Parent and root.Parent and humanoid.Health>0 do
@@ -5699,13 +5698,17 @@ shared.__AutoSAEController = {Destroy = destroy, Gui = gui, Reporting = FusionMo
     local destination=point+Vector3.new(0,humanoid.HipHeight+root.Size.Y/2,0)
     local delta=destination-root.Position
     root.AssemblyLinearVelocity=Vector3.zero
-    if delta.Magnitude<=2 then
+    if delta.Magnitude<=settings.stepStuds then
      root.CFrame=root.CFrame+delta
      return "Test · arrivé à l'oeuf "..tostring(target)
     end
-    assert(os.clock()<deadline,"Test · délai dépassé")
-    root.CFrame=root.CFrame+delta.Unit*2
-    task.wait(.08)
+    root.CFrame=root.CFrame+delta.Unit*settings.stepStuds
+    local movedAt=os.clock()
+    repeat
+     local remaining=settings.intervalMs/1000-(os.clock()-movedAt)
+     if remaining<=0 then break end
+     task.wait(math.min(.05,remaining))
+    until not valid()
    end
    return "Test · déplacement arrêté"
   end,
