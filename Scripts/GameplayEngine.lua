@@ -4276,9 +4276,9 @@ do
        nextCollectAt=Workspace:GetServerTimeNow()+1
       end
      else
-      local flat=delta*Vector3.new(1,0,1)
-      if flat.Magnitude>2 then direction=flat.Unit end
-      rise=delta.Y>2
+      -- Small position steps follow the moving Spark on all three axes.
+      local step=math.min(2,delta.Magnitude)
+      if step>0 then root.CFrame=root.CFrame+delta.Unit*step end
      end
     end
     task.wait(.08)
