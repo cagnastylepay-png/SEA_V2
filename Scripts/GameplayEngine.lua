@@ -5618,7 +5618,15 @@ end)()
 
 log("SESSION", "Nouveau lancement %s", os.date("%Y-%m-%d %H:%M:%S"))
 loadSettings()
-if FusionModules.Reporting.ClientKind~="admin" then FusionModules.Options.AutoHelp=false;FusionModules.Options.HelpFavorites="";automaticMode=true end
+if FusionModules.Reporting.ClientKind=="admin" then
+ -- A verified arrival can finish an automatic trip already started before teleporting.
+ local arrival=FusionModules.Arrival
+ automaticMode=automaticMode and arrival.Uid~=nil and not arrival.ManualSteal
+else
+ FusionModules.Options.AutoHelp=false
+ FusionModules.Options.HelpFavorites=""
+ automaticMode=true
+end
 if game.JobId~="" then visitedServers[game.JobId]=true end
 if FusionModules.Reporting.Headless then
  local playerGui=player:FindFirstChildOfClass("PlayerGui")
