@@ -5726,7 +5726,7 @@ shared.__AutoSAEController = {Destroy = destroy, Gui = gui, Reporting = FusionMo
       root.AssemblyLinearVelocity=Vector3.zero
       if not tween or tweenRevision~=settings.revision or (tweenGoal-destination).Magnitude>.5 or tween.PlaybackState~=Enum.PlaybackState.Playing then
        stopTween();tweenGoal=destination;tweenRevision=settings.revision
-       tween=game:GetService("TweenService"):Create(root,TweenInfo.new(settings.tweenDuration,Enum.EasingStyle.Linear),{CFrame=CFrame.new(destination)*root.CFrame.Rotation})
+       tween=game:GetService("TweenService"):Create(root,TweenInfo.new(delta.Magnitude/settings.tweenSpeed,Enum.EasingStyle.Linear),{CFrame=CFrame.new(destination)*root.CFrame.Rotation})
        tween:Play()
       end
       task.wait(.05)

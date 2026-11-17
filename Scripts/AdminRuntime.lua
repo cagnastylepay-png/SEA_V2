@@ -1,6 +1,6 @@
 -- Typed Render bridge. No GUI, arbitrary code commands or observer automation.
 return function(ctx)
- local A={Destroyed=false,Busy=false,Revision=0,Seen={},Session=ctx.Report.SessionId,MovementSettings={mode="teleport",stepStuds=2,intervalMs=80,walkSpeed=16,tweenDuration=2,revision=0}}
+ local A={Destroyed=false,Busy=false,Revision=0,Seen={},Session=ctx.Report.SessionId,MovementSettings={mode="teleport",stepStuds=2,intervalMs=80,walkSpeed=16,tweenSpeed=200,revision=0}}
  local player=game:GetService("Players").LocalPlayer
  local RS=game:GetService("ReplicatedStorage")
  local Http=game:GetService("HttpService")
@@ -716,7 +716,7 @@ return function(ctx)
   if mode=="walk"then
    assert(positive(m.walkSpeed),"Vitesse Walk invalide");A.MovementSettings.walkSpeed=m.walkSpeed
   elseif mode=="tween"then
-   assert(positive(m.tweenDuration),"Durée Tween invalide");A.MovementSettings.tweenDuration=m.tweenDuration
+   assert(positive(m.tweenSpeed),"Vitesse Tween invalide");A.MovementSettings.tweenSpeed=m.tweenSpeed
   else
    assert(mode=="teleport","Mode de déplacement inconnu")
    assert(positive(m.stepStuds),"Distance de saut invalide")
@@ -837,7 +837,7 @@ return function(ctx)
    if ok and confirmed and m.action=="trajectory.start" then result.message="Capture démarrée pour 45 s maximum" end
    if ok and confirmed and(m.action=="movement.test.start"or m.action=="movement.test.update")then
     local settings=A.MovementSettings
-    local description=settings.mode=="walk"and("Walk · "..settings.walkSpeed.." studs/s")or settings.mode=="tween"and("Tween · "..settings.tweenDuration.." s")or("Téléportation · "..settings.stepStuds.." studs toutes les "..settings.intervalMs.." ms")
+    local description=settings.mode=="walk"and("Walk · "..settings.walkSpeed.." studs/s")or settings.mode=="tween"and("Tween · "..settings.tweenSpeed.." studs/s")or("Téléportation · "..settings.stepStuds.." studs toutes les "..settings.intervalMs.." ms")
     result.message=(m.action=="movement.test.start"and"Test démarré · "or"Test · valeurs appliquées : ")..description
    end
    if ok and confirmed and m.action=="movement.test.stop"then result.message="Test · arrêt demandé"end
