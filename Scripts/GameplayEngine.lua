@@ -4276,8 +4276,9 @@ do
        nextCollectAt=Workspace:GetServerTimeNow()+1
       end
      else
-      -- Teleport directly to the selected moving Spark.
-      root.CFrame=root.CFrame+delta
+      -- Small position steps follow the moving Spark on all three axes.
+      local step=math.min(2,delta.Magnitude)
+      if step>0 then root.CFrame=root.CFrame+delta.Unit*step end
      end
     end
     task.wait(.08)
