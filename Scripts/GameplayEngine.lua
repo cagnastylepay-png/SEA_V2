@@ -4277,11 +4277,11 @@ do
       end
      else
       -- Small position steps follow the moving Spark on all three axes.
-      local step=math.min(2,delta.Magnitude)
+      local step=math.min(20,delta.Magnitude)
       if step>0 then root.CFrame=root.CFrame+delta.Unit*step end
      end
     end
-    task.wait(.08)
+    task.wait(.06)
    end
   end)
   RunService:UnbindFromRenderStep(input)
@@ -5689,28 +5689,64 @@ shared.__AutoSAEController = {Destroy = destroy, Gui = gui, Reporting = FusionMo
     end
    end
    assert(target,"Aucun oeuf disponible sur ce serveur")
+   local tween,tweenGoal,tweenRevision
+   local originalSpeed,appliedSpeed=humanoid.WalkSpeed,nil
+   local function stopTween()
+    if tween then tween:Cancel();tween=nil end
+   end
+   local function stopWalk()
+    if not appliedSpeed then return end
+    humanoid:Move(Vector3.zero,false)
+    humanoid:MoveTo(root.Position)
+    if humanoid.WalkSpeed==appliedSpeed then humanoid.WalkSpeed=originalSpeed end
+    appliedSpeed=nil
+   end
    humanoid:Move(Vector3.zero,false)
    humanoid.Jump=false
-   while valid()and character.Parent and root.Parent and humanoid.Health>0 do
-    local record=records[target]
-    local point=getRecordPosition(record)
-    assert(record and point and isTrackedFieldState(record),"L'oeuf cible a disparu")
-    local destination=point+Vector3.new(0,humanoid.HipHeight+root.Size.Y/2,0)
-    local delta=destination-root.Position
-    root.AssemblyLinearVelocity=Vector3.zero
-    if delta.Magnitude<=settings.stepStuds then
-     root.CFrame=root.CFrame+delta
-     return "Test · arrivé à l'oeuf "..tostring(target)
+   local ok,result=pcall(function()
+    while valid()and character.Parent and root.Parent and humanoid.Health>0 do
+     local record=records[target]
+     local point=getRecordPosition(record)
+     assert(record and point and isTrackedFieldState(record),"L'oeuf cible a disparu")
+     local destination=point+Vector3.new(0,humanoid.HipHeight+root.Size.Y/2,0)
+     local delta=destination-root.Position
+     local mode=settings.mode or "teleport"
+     if delta.Magnitude<=(mode=="teleport"and settings.stepStuds or 1)then
+      if mode=="teleport"then root.CFrame=root.CFrame+delta end
+      return "Test · arrivé à l'oeuf "..tostring(target)
+     end
+     if mode=="walk"then
+      stopTween()
+      if not appliedSpeed then originalSpeed=humanoid.WalkSpeed end
+      appliedSpeed=settings.walkSpeed;humanoid.WalkSpeed=appliedSpeed
+      humanoid:MoveTo(destination)
+      task.wait(.05)
+     elseif mode=="tween"then
+      stopWalk()
+      root.AssemblyLinearVelocity=Vector3.zero
+      if not tween or tweenRevision~=settings.revision or (tweenGoal-destination).Magnitude>.5 or tween.PlaybackState~=Enum.PlaybackState.Playing then
+       stopTween();tweenGoal=destination;tweenRevision=settings.revision
+       tween=game:GetService("TweenService"):Create(root,TweenInfo.new(settings.tweenDuration,Enum.EasingStyle.Linear),{CFrame=CFrame.new(destination)*root.CFrame.Rotation})
+       tween:Play()
+      end
+      task.wait(.05)
+     else
+      stopTween();stopWalk()
+      root.AssemblyLinearVelocity=Vector3.zero
+      root.CFrame=root.CFrame+delta.Unit*settings.stepStuds
+      local movedAt=os.clock()
+      repeat
+       local remaining=settings.intervalMs/1000-(os.clock()-movedAt)
+       if remaining<=0 then break end
+       task.wait(math.min(.05,remaining))
+      until not valid()or settings.mode~="teleport"
+     end
     end
-    root.CFrame=root.CFrame+delta.Unit*settings.stepStuds
-    local movedAt=os.clock()
-    repeat
-     local remaining=settings.intervalMs/1000-(os.clock()-movedAt)
-     if remaining<=0 then break end
-     task.wait(math.min(.05,remaining))
-    until not valid()
-   end
-   return "Test · déplacement arrêté"
+    return "Test · déplacement arrêté"
+   end)
+   stopTween();stopWalk()
+   if not ok then error(result,0)end
+   return result
   end,
   GetOptions=function()return table.clone(FusionModules.Options)end,
   BiomeChoices=FusionModules.Helpers.BiomeChoices,

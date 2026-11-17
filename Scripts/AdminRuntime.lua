@@ -1,6 +1,6 @@
 -- Typed Render bridge. No GUI, arbitrary code commands or observer automation.
 return function(ctx)
- local A={Destroyed=false,Busy=false,Revision=0,Seen={},Session=ctx.Report.SessionId,MovementSettings={stepStuds=2,intervalMs=80}}
+ local A={Destroyed=false,Busy=false,Revision=0,Seen={},Session=ctx.Report.SessionId,MovementSettings={mode="teleport",stepStuds=2,intervalMs=80,walkSpeed=16,tweenDuration=2,revision=0}}
  local player=game:GetService("Players").LocalPlayer
  local RS=game:GetService("ReplicatedStorage")
  local Http=game:GetService("HttpService")
@@ -711,10 +711,20 @@ return function(ctx)
  end
 
  function A.UpdateMovementSettings(m)
-  assert(type(m.stepStuds)=="number"and m.stepStuds==m.stepStuds and m.stepStuds>0 and m.stepStuds<math.huge,"Distance de saut invalide")
-  assert(type(m.intervalMs)=="number"and m.intervalMs>=1 and m.intervalMs<=9007199254740991 and m.intervalMs%1==0,"Intervalle invalide")
-  A.MovementSettings.stepStuds=m.stepStuds
-  A.MovementSettings.intervalMs=m.intervalMs
+  local mode=m.mode or "teleport"
+  local function positive(value)return type(value)=="number"and value==value and value>0 and value<math.huge end
+  if mode=="walk"then
+   assert(positive(m.walkSpeed),"Vitesse Walk invalide");A.MovementSettings.walkSpeed=m.walkSpeed
+  elseif mode=="tween"then
+   assert(positive(m.tweenDuration),"Durée Tween invalide");A.MovementSettings.tweenDuration=m.tweenDuration
+  else
+   assert(mode=="teleport","Mode de déplacement inconnu")
+   assert(positive(m.stepStuds),"Distance de saut invalide")
+   assert(type(m.intervalMs)=="number"and m.intervalMs>=1 and m.intervalMs<=9007199254740991 and m.intervalMs%1==0,"Intervalle invalide")
+   A.MovementSettings.stepStuds=m.stepStuds;A.MovementSettings.intervalMs=m.intervalMs
+  end
+  A.MovementSettings.mode=mode
+  A.MovementSettings.revision+=1
  end
  function A.Execute(m)
   if m.action=="movement.test.update"then A.UpdateMovementSettings(m);return true end
@@ -725,7 +735,7 @@ return function(ctx)
    assert(not A.MovementTest,"Un test est déjà en cours")
    assert(not A.Fishing,"Arrête AutoFishing avant le test")
    assert(type(ctx.TestMoveFarthest)=="function","Recharge Admin.lua pour activer le test")
-   if m.stepStuds~=nil or m.intervalMs~=nil then A.UpdateMovementSettings(m)end
+   if m.mode~=nil or m.stepStuds~=nil or m.intervalMs~=nil then A.UpdateMovementSettings(m)end
    ctx.SetEnabled(false)
    local run={};A.MovementTest=run
    task.defer(function()
@@ -826,7 +836,9 @@ return function(ctx)
    local capture=ok and confirmed and m.action=="trajectory.stop" and A.Trajectory
    if ok and confirmed and m.action=="trajectory.start" then result.message="Capture démarrée pour 45 s maximum" end
    if ok and confirmed and(m.action=="movement.test.start"or m.action=="movement.test.update")then
-    result.message=(m.action=="movement.test.start"and"Test démarré · "or"Test · valeurs appliquées : ")..tostring(A.MovementSettings.stepStuds).." studs toutes les "..tostring(A.MovementSettings.intervalMs).." ms"
+    local settings=A.MovementSettings
+    local description=settings.mode=="walk"and("Walk · "..settings.walkSpeed.." studs/s")or settings.mode=="tween"and("Tween · "..settings.tweenDuration.." s")or("Téléportation · "..settings.stepStuds.." studs toutes les "..settings.intervalMs.." ms")
+    result.message=(m.action=="movement.test.start"and"Test démarré · "or"Test · valeurs appliquées : ")..description
    end
    if ok and confirmed and m.action=="movement.test.stop"then result.message="Test · arrêt demandé"end
    if capture then result.message="Capture prête à télécharger" end
