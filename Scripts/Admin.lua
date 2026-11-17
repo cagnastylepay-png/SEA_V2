@@ -37,6 +37,7 @@ end
 function Admin.SetEnabled(enabled)return controller.SetEnabled(enabled)end
 function Admin.GetStatus()return {Destroyed=Admin.Destroyed,Connected=controller.Reporting.Ready,Busy=runtime.Busy}end
 shared.__SEA_V2Admin=Admin
+Admin.SetEnabled(true)
 return Admin
 
 end
