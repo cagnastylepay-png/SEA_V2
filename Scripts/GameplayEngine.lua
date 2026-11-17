@@ -5677,6 +5677,38 @@ shared.__AutoSAEController = {Destroy = destroy, Gui = gui, Reporting = FusionMo
   SetRuntime=function(runtime)FusionModules.AdminRuntime=runtime end,
   Ready=function()return ready and not destroyed end,
   TraceSafe=isSafe,
+  TestMoveFarthest=function(valid)
+   local character,humanoid,root=getCharacterParts()
+   assert(character and humanoid and root,"Personnage absent")
+   local target,furthest
+   for uid,record in pairs(records)do
+    local point=getRecordPosition(record)
+    if point and isTrackedFieldState(record)and not ownsEgg(uid)then
+     local distance=(point-root.Position).Magnitude
+     if not furthest or distance>furthest then target,furthest=uid,distance end
+    end
+   end
+   assert(target,"Aucun oeuf disponible sur ce serveur")
+   local deadline=os.clock()+math.min(600,furthest/25+30)
+   humanoid:Move(Vector3.zero,false)
+   humanoid.Jump=false
+   while valid()and character.Parent and root.Parent and humanoid.Health>0 do
+    local record=records[target]
+    local point=getRecordPosition(record)
+    assert(record and point and isTrackedFieldState(record),"L'oeuf cible a disparu")
+    local destination=point+Vector3.new(0,humanoid.HipHeight+root.Size.Y/2,0)
+    local delta=destination-root.Position
+    root.AssemblyLinearVelocity=Vector3.zero
+    if delta.Magnitude<=2 then
+     root.CFrame=root.CFrame+delta
+     return "Test · arrivé à l'oeuf "..tostring(target)
+    end
+    assert(os.clock()<deadline,"Test · délai dépassé")
+    root.CFrame=root.CFrame+delta.Unit*2
+    task.wait(.08)
+   end
+   return "Test · déplacement arrêté"
+  end,
   GetOptions=function()return table.clone(FusionModules.Options)end,
   BiomeChoices=FusionModules.Helpers.BiomeChoices,
   InventoryNotice=function(text)FusionModules.InventoryNotice=tostring(text):sub(1,500)end,

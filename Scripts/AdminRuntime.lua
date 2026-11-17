@@ -711,6 +711,38 @@ return function(ctx)
  end
 
  function A.Execute(m)
+  if m.action=="movement.test.stop"then
+   if A.MovementTest then A.MovementTest.Cancelled=true end
+   return true
+  elseif m.action=="movement.test.start"then
+   assert(not A.MovementTest,"Un test est déjà en cours")
+   assert(not A.Fishing,"Arrête AutoFishing avant le test")
+   assert(type(ctx.TestMoveFarthest)=="function","Recharge Admin.lua pour activer le test")
+   ctx.SetEnabled(false)
+   local run={};A.MovementTest=run
+   task.defer(function()
+    local acquired=false
+    local function valid()return not A.Destroyed and not run.Cancelled and A.MovementTest==run and ctx.Ready()and not ctx.IsEnabled()end
+    local ok,message=pcall(function()
+     local deadline=os.clock()+30
+     while valid()and not acquired do
+      acquired=ctx.BeginManual()
+      if not acquired then assert(os.clock()<deadline,"Action en cours : test annulé");task.wait(.1)end
+     end
+     if not valid()then return "Test · déplacement arrêté" end
+     ctx.InventoryNotice("Test · déplacement vers l'oeuf le plus éloigné")
+     return ctx.TestMoveFarthest(function()return valid()and ctx.ManualCanContinue()end)
+    end)
+    if acquired then ctx.EndManual()end
+    if A.MovementTest==run then A.MovementTest=nil end
+    if not A.Destroyed then
+     ctx.InventoryNotice(ok and message or "Test · "..tostring(message))
+     pcall(A.Publish,true)
+    end
+   end)
+   return true
+  end
+  assert(not A.MovementTest or m.action=="automation.set","Arrête le test avant cette action")
   if m.action=="trajectory.start" then startTrajectory();return true
   elseif m.action=="trajectory.stop" then
    assert(A.Trajectory,"Aucune capture disponible")
@@ -767,7 +799,7 @@ return function(ctx)
   local lock={requestId=m.requestId};shared.__SEAAdminRequestLock=lock
   task.spawn(function()
    A.Dispatched=false
-   local diagnostic=m.action=="trajectory.start" or m.action=="trajectory.stop"
+   local diagnostic=m.action=="trajectory.start" or m.action=="trajectory.stop" or m.action=="movement.test.start" or m.action=="movement.test.stop"
    local inventoryAction=not diagnostic and not A.Fishing and m.action~="settings.update"and m.action~="automation.set"and m.action~="fishing.set"and m.action~="images.collect"
    local ok,confirmed=pcall(function()
     if inventoryAction and ctx.BeginManual then
@@ -785,6 +817,8 @@ return function(ctx)
     message=ok and confirmed and(m.action=="egg.mutate"and A.MutationStatus or m.action=="automation.set"and (m.enabled and "AUTO activé" or "Arrêt AUTO confirmé") or"Action confirmee par le jeu")or tostring(ok and"Confirmation en attente : aucune relance automatique"or confirmed):sub(1,500)}
    local capture=ok and confirmed and m.action=="trajectory.stop" and A.Trajectory
    if ok and confirmed and m.action=="trajectory.start" then result.message="Capture démarrée pour 45 s maximum" end
+   if ok and confirmed and m.action=="movement.test.start"then result.message="Test démarré · 2 studs toutes les 80 ms vers l'oeuf le plus éloigné"end
+   if ok and confirmed and m.action=="movement.test.stop"then result.message="Test · arrêt demandé"end
    if capture then result.message="Capture prête à télécharger" end
    A.Seen[m.requestId]=result;A.SeenOrder=A.SeenOrder or{};table.insert(A.SeenOrder,m.requestId)
    if #A.SeenOrder>100 then A.Seen[table.remove(A.SeenOrder,1)]=nil end
