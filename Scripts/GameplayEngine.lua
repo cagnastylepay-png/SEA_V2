@@ -85,6 +85,8 @@ local inventoryPlacementBusy = false
 local placementRequest
 local FusionModules = {}
 FusionModules.Helpers = {}
+FusionModules.AdminCollection = type(shared.__AutoSAEReportingOptions) == "table"
+ and shared.__AutoSAEReportingOptions.ClientKind == "admin"
 FusionModules.Options={AutoEggs=true,AutoEggsMin=2e9,AutoEggsMax=999e9,
  AutoTreadmill=true,AutoSell=true,AutoSellMin=0,AutoSellMax=2e9,
  AutoFuse=true,AutoFuseMin=0,AutoFuseMax=1e33,AutoOpen=true,AutoOpenMin=0,AutoOpenMax=20e9,AutoPlace=true,AutoPlaceMin=2e9,AutoPlaceMax=1e33,AutoPapillon=true,AutoEquipBest=true,AutoIndex=true,QueueNearest=false,TeleportInstantMin=50e9}
@@ -139,7 +141,7 @@ function FusionModules.Helpers.BiomeChoices()
 end
 function FusionModules.Helpers.AllowedBiome(record)
  local maximum=FusionModules.Options.AutoEggsMaxBiome or"All"
- if maximum=="All"then return true end
+ if FusionModules.AdminCollection or maximum=="All"then return true end
  local area=record and(record.AreaId or record.areaId or record.zone)
  local rank,limit
  for i,b in ipairs(FusionModules.Biomes)do if b.id==area then rank=i end;if b.id==maximum then limit=i end end
@@ -175,7 +177,10 @@ function FusionModules.Helpers.RestoreOptions(saved)
  if type(saved)~="table"then return false end
  local candidate=table.clone(FusionModules.Options)
  for key,current in pairs(candidate)do
-  local value=saved[key]
+  local derivedCollectionOption = FusionModules.AdminCollection
+   and (key=="AutoEggsMin" or key=="AutoEggsMax" or key=="AutoEggsMaxBiome" or key=="AutoIndex")
+  local value
+  if not derivedCollectionOption then value=saved[key] end
   if value~=nil then
    if type(value)~=type(current)then return false end
    if type(value)=="number"and(value~=value or value<0 or value>=math.huge)then return false end
@@ -851,6 +856,7 @@ local function getRarityName(record)
 end
 
 function FusionModules.Helpers.IsAlwaysEligibleRarity(record)
+ if FusionModules.AdminCollection then return false end
  local rarity=getRarityName(record)
  return rarity=="Divine"
 end
@@ -894,6 +900,38 @@ local function getRatePerSecond(record)
 	end
 
 	return rate
+end
+
+function FusionModules.Helpers.RefreshAdminCollection()
+ if not FusionModules.AdminCollection or not ready then return end
+ local ok,profile=pcall(Save.Peek)
+ if not ok or type(profile)~="table" then return end
+
+ local lowest
+ for _,uid in ipairs(profile.EquippedAssets or {}) do
+  local saved=profile.Inventory and profile.Inventory[uid]
+  if type(saved)=="table" then
+   local decoded,item=pcall(FusionModules.Items.Decode,saved)
+   if decoded then
+    local rated,rate=pcall(AssetEarnings.RatePerSecond,item)
+    if rated and type(rate)=="number" and rate==rate and rate>=0 and rate<math.huge then
+     lowest=lowest and math.min(lowest,rate) or rate
+    end
+   end
+  end
+ end
+
+ local options=FusionModules.Options
+ -- Mutations add their bonus above x1: 1 + (2.5 - 1) + (2.5 - 1) = 4.
+ local minimum=lowest and math.min(lowest/4,1e33) or 1e33
+ local changed=options.AutoEggsMin~=minimum or options.AutoEggsMax~=1e33
+  or options.AutoEggsMaxBiome~="All" or options.AutoIndex~=true
+ options.AutoEggsMin=minimum
+ options.AutoEggsMax=1e33
+ options.AutoEggsMaxBiome="All"
+ options.AutoIndex=true
+ minimumRatePerSecond=minimum
+ if changed and FusionModules.Reporting then FusionModules.Reporting.MarkSettingsDirty() end
 end
 
 local function getWeightKg(record)
@@ -1010,6 +1048,7 @@ do
    report.SettingsRevision+=1
    local revision=report.SettingsRevision
    local serial=report.Serial
+   FusionModules.Helpers.RefreshAdminCollection()
    local options=table.clone(FusionModules.Options)
    local previous=report.LastOptions
    for key,value in pairs(options) do
@@ -2340,6 +2379,7 @@ end
 
 syncQueue = function()
 	if not ready or destroyed then return end
+	FusionModules.Helpers.RefreshAdminCollection()
 	local plotCategories = FusionModules.Helpers.plotAnimalCategories()
 	for uid, entry in pairs(queuedEggs) do
 		if not currentCycle or currentCycle.uid ~= uid then
