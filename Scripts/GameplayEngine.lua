@@ -89,7 +89,7 @@ FusionModules.AdminCollection = type(shared.__AutoSAEReportingOptions) == "table
  and shared.__AutoSAEReportingOptions.ClientKind == "admin"
 FusionModules.Options={AutoEggs=true,AutoEggsMin=2e9,AutoEggsMax=999e9,
  AutoTreadmill=true,AutoSell=true,AutoSellMin=0,AutoSellMax=2e9,
- AutoFuse=true,AutoFuseMin=0,AutoFuseMax=1e33,AutoOpen=true,AutoOpenMin=0,AutoOpenMax=20e9,AutoPlace=true,AutoPlaceMin=2e9,AutoPlaceMax=1e33,AutoPapillon=true,AutoEquipBest=true,AutoIndex=true,QueueNearest=false,TeleportInstantMin=50e9}
+ AutoFuse=true,AutoFuseMin=0,AutoFuseMax=1e33,AutoOpen=true,AutoOpenMin=0,AutoOpenMax=20e9,AutoPlace=true,AutoPlaceMin=2e9,AutoPlaceMax=1e33,AutoPapillon=true,AutoEquipBest=true,AutoIndex=true,TeleportInstantMin=50e9}
 
 function FusionModules.Helpers.InIncomeRange(key,rate)
  if FusionModules.AdminCollection and key=="AutoFuse" then return true end
@@ -99,7 +99,6 @@ end
 
 FusionModules.Options.AutoSkyfall=false
 FusionModules.Options.AutoStormGlass=false
-FusionModules.Options.BetaMovement=false
 FusionModules.Options.AutoSlickRick=false
 FusionModules.Options.AutoStormRush=false
 FusionModules.Options.AutoPlotUpgrade=false
@@ -215,7 +214,7 @@ local queuedEggs = {}
 function FusionModules.Helpers.ShouldRun()
  if FusionModules.Arrival and FusionModules.Arrival.ManualSteal then return true end
  if FusionModules.Reporting.ClientKind=="admin" and player:GetAttribute("InAlienLagoon")==true then return true end
- for key,value in pairs(FusionModules.Options)do if key~="QueueNearest"and type(value)=="boolean"and value then return true end end
+ for key,value in pairs(FusionModules.Options)do if type(value)=="boolean"and value then return true end end
  return next(queuedEggs)~=nil
 end
 local removedFromAuto = {}
@@ -411,7 +410,7 @@ local function loadSettings()
 		minimumRatePerSecond = minimum * 1e9
 	end
  for key,value in pairs(FusionModules.Options)do
-  if type(value)=="boolean"and key~="AutoCosmicEclipse"and key~="AutoSkyfall"and key~="AutoStormGlass"and key~="BetaMovement"and key~="AutoStormRush"and key~="AutoSlickRick"and key~="AutoPlotUpgrade"and key~="AutoTreadmillUpgrade"and key~="AutoHelp"and key~="AutoMutations"and key~="AutoSellAnimals"and not key:match("^Mutation")then FusionModules.Options[key]=automaticMode end
+  if type(value)=="boolean"and key~="AutoCosmicEclipse"and key~="AutoSkyfall"and key~="AutoStormGlass"and key~="AutoStormRush"and key~="AutoSlickRick"and key~="AutoPlotUpgrade"and key~="AutoTreadmillUpgrade"and key~="AutoHelp"and key~="AutoMutations"and key~="AutoSellAnimals"and not key:match("^Mutation")then FusionModules.Options[key]=automaticMode end
  end
  FusionModules.Options.AutoEggsMin=minimumRatePerSecond
  FusionModules.Options.AutoSellMax=minimumRatePerSecond
@@ -1476,26 +1475,6 @@ local function followTakenEgg(ctx)
 	return false,"annule"
 end
 
-function FusionModules.Helpers.DriveBetaOnGround(ctx, humanoid, root, destination, lastMoved)
-	if not ctx.betaMovement or ctx.betaGroundFallback or ctx.help or ctx.CollectionStopped or ctx.watchForReappearance then return end
-	if os.clock() - lastMoved > 0.45 then
-		ctx.betaGroundFallback = true
-		log("BETA_MOVEMENT", "Progression bloquee | reprise du trajet natif UID=%s", ctx.uid)
-		return
-	end
-	if humanoid.FloorMaterial == Enum.Material.Air or humanoid.WalkSpeed <= 0 then return end
-	local offset = destination - root.Position
-	local horizontal = Vector3.new(offset.X, 0, offset.Z)
-	if horizontal.Magnitude < 0.05 then return end
-	local speed = math.min(humanoid.WalkSpeed, horizontal.Magnitude * 12)
-	local velocity = horizontal.Unit * speed
-	root.AssemblyLinearVelocity = Vector3.new(velocity.X, root.AssemblyLinearVelocity.Y, velocity.Z)
-	if not ctx.betaGroundLogged then
-		ctx.betaGroundLogged = true
-		log("BETA_MOVEMENT", "Assistance au sol active | UID=%s", ctx.uid)
-	end
-end
-
 local function approachEgg(ctx, destination)
 	local _, humanoid, root = getCharacterParts()
 	if not humanoid or not root then return false, "personnage absent" end
@@ -1590,7 +1569,6 @@ local function approachEgg(ctx, destination)
 					FusionModules.Helpers.formatPosition(destination), distance, now - started)
 				move(destination, {Radius = ctx.preciseRadius or CONFIG.PreciseArrivalRadius, Flat = true, ArrivalPosition = eggPosition})
 			end
-			FusionModules.Helpers.DriveBetaOnGround(ctx, humanoid, root, destination, lastMoved)
 			if now - lastLog >= CONFIG.ProgressInterval then
 				lastLog = now
 				log("MOVE_PROGRESS", "Phase=APPROACH Pos=%s DistanceXZ=%.2f WalkSpeed=%.1f VitesseReelle=%.1f Temps=%.2fs",
@@ -1892,7 +1870,6 @@ local function moveReturnLoop(ctx, destination)
 			move(destination, {Radius = arrivalRadius})
 			lastCommand = now
 		end
-		FusionModules.Helpers.DriveBetaOnGround(ctx, humanoid, root, destination, lastMoved)
 		if now - lastLog >= CONFIG.ProgressInterval then
 			lastLog = now
 			log("MOVE_PROGRESS", "Phase=RETURN Pos=%s DistanceXZ=%.2f WalkSpeed=%.1f VitesseReelle=%.1f Safe=%s",
@@ -2136,7 +2113,6 @@ local function runCycle(record, rate, recovering, findNext)
  if help and not helpDestination then return false,"Centre Forest introuvable"end
  local ctx = {
   flightReason=flightReason,flightRate=rate,
-  betaMovement=FusionModules.Reporting.ClientKind=="admin" and FusionModules.Options.BetaMovement==true,
   help=help,CollectionStopped=FusionModules.CollectionReturnPending==true,
 		uid = record.Uid, record = record, generation = generation, character = character, findNext = findNext,
 		startedAt = os.clock(), phaseStartedAt = os.clock(),
@@ -2275,7 +2251,6 @@ function FusionModules.Helpers.QueueDistance(record,position)
 end
 function FusionModules.Helpers.QueueBefore(a,b)
  if (a.Source=="HELP")~=(b.Source=="HELP")then return a.Source~="HELP"end
- if FusionModules.Options.QueueNearest and a.Distance~=b.Distance then return a.Distance<b.Distance end
  if a.Rate~=b.Rate then return a.Rate>b.Rate end
  if a.Distance~=b.Distance then return a.Distance<b.Distance end
  return a.Uid<b.Uid
