@@ -185,6 +185,37 @@ function O.Header(kind,moduleId,revision)
  return {version=1,type=kind,moduleId=moduleId,sessionId=O.Session,revision=revision,
  placeId=tostring(game.PlaceId),jobId=game.JobId}
 end
+local function observeStormEvents()
+ local cave=O.StormheartCave
+ if not cave then
+  local sharedModules=RS:FindFirstChild("Shared")
+  local util=sharedModules and sharedModules:FindFirstChild("Util")
+  local module=util and util:FindFirstChild("StormheartCave")
+  if module then
+   local ok,result=pcall(require,module)
+   if ok and type(result)=="table" then cave=result;O.StormheartCave=cave end
+  end
+ end
+ local rush
+ if cave and type(cave.State)=="function" then
+  local ok,state=pcall(cave.State)
+  if ok and (state=="Charging" or state=="Rush") then rush=state end
+ end
+ local folder=workspace:FindFirstChild("StormheartRockfallLocal")
+ local rocks=folder and folder:FindFirstChild("Rocks")
+ local stormglass=false
+ if rocks then
+  for _,rock in ipairs(rocks:GetChildren()) do
+   if rock:GetAttribute("StormheartInfused")==true or rock:FindFirstChild("InfusedFx") then
+    stormglass=true;break
+   end
+  end
+ end
+ if O.Stormglass~=stormglass or O.StormRush~=rush then
+  O.Stormglass=stormglass;O.StormRush=rush;O.PlayerDirty=true;O.ForcePlayers=true
+ end
+end
+
 function O.Players()
  local rows,incomes={},{}
  local snapshot=O.Roster and safe(O.Roster.ReadSnapshot)
@@ -337,12 +368,17 @@ task.spawn(function()
   if O.Connecting and now-O.LastAck>20 then O.Disconnect()end
   if O.PendingAt and now-O.PendingAt>25 then O.PendingAt=nil;O.Disconnect()end
   if O.Ready and game.JobId~=""then
+   if O.ClientKind=="observer" and now>=(O.NextStormObservation or 0) then
+    O.NextStormObservation=now+1
+    observeStormEvents()
+   end
    if O.PlayerDirty and now-(O.LastPlayers or 0)>=1 then
     local rows=O.Players();local fingerprint=Http:JSONEncode(rows)
     if O.ForcePlayers or fingerprint~=O.PlayerFingerprint then
      O.PlayerRevision=O.PlayerRevision+1
      local message=O.Header("players.snapshot","PlayerReporter",O.PlayerRevision)
      message.reporterUserId=tostring(player.UserId)
+     if O.ClientKind=="observer" then message.stormglass=O.Stormglass==true;message.stormRush=O.StormRush end
      if O.Send(message,"players",rows)then O.PlayerFingerprint=fingerprint;O.ForcePlayers=false;O.PendingAt=O.PendingAt or now end
     end
     O.PlayerDirty=false;O.LastPlayers=now
