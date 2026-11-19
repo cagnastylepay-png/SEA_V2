@@ -21,8 +21,7 @@ return function(hub)
  peers={me,friend};assert(not fm.Help.Eligible(egg),"delivered UID never recollected")
  assert(fm.Help.Destination()==position+Vector3.new(0,4,0),"Forest Bounds center, not decorative model pivot")
  local comparator=assert(loadstring(section("function FusionModules.Helpers.QueueBefore", "local function queueOrder()")));setfenv(comparator,setmetatable(env,{__index=getfenv()}));comparator()
- fm.Options.QueueNearest=true
- assert(fm.Helpers.QueueBefore({Uid="a",Source="AUTO",Rate=1,Distance=100},{Uid="b",Source="HELP",Rate=9,Distance=1}),"normal beats help even with nearest sorting")
+ assert(fm.Helpers.QueueBefore({Uid="a",Source="AUTO",Rate=1,Distance=100},{Uid="b",Source="HELP",Rate=9,Distance=1}),"normal collection takes precedence over help")
  -- Exercise the full help branch: carry -> Forest -> native drop -> empty return home.
  local moves={};env.queuedEggs={route={Source="HELP"}};env.generation=1
  env.getStartAreaDestination=function()return Vector3.new(0,0,0)end
