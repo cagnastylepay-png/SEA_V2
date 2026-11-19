@@ -69,7 +69,7 @@ function O.TickSpread(now)
  end
  local target=O.SpreadTarget
  if target and target.manual and now>=target.deadline then O.SpreadTarget=nil;return end
- if not target or not O.Ready or O.ClickBusy or (O.StormController and O.StormController.Busy) or now<(O.SpreadAt or 0)or now<O.SpreadRetryAt then return end
+ if not target or not O.Ready or O.ClickBusy or now<(O.SpreadAt or 0)or now<O.SpreadRetryAt then return end
  if target.jobId~=game.JobId then O.SpreadTarget=nil;return end
  if not target.manual and not Players:GetPlayerByUserId(tonumber(target.keeperUserId)) then O.SpreadTarget=nil;return end
  O.SpreadTeleportAt=now;O.SpreadRetryAt=now+60
@@ -111,8 +111,6 @@ function O.Connect(signal,callback)
  if ok then table.insert(O.Connections,connection)end
 end
 function O.Disconnect()
- O.StormOptions=nil
- if O.StormController then O.StormController.Configure(false,false) end
  O.Serial+=1;O.LastPolicy=nil;O.SpreadTarget=nil
  O.Ready=false;O.IdentityReady=false;O.Connecting=false;O.EggAckRevision=nil
  local socket=O.Socket;O.Socket=nil
@@ -125,7 +123,6 @@ end
 function O.Destroy()
  if O.Destroyed then return end
  O.Destroyed=true
- if O.StormController then O.StormController.Destroy();O.StormController=nil end
  if shared.__SEAObserverController==O then shared.__SEAObserverController=nil end
  table.clear(O.Listeners)
  O.Disconnect()
@@ -141,7 +138,6 @@ function O.Configure(kind,owner,url,token)
  assert(kind=="observer"or kind=="hub"or kind=="admin","Role invalide")
  local changed=O.ClientKind~=kind or O.Url~=url or O.Token~=token
  O.Owner=owner;O.ClientKind=kind;O.Url=url;O.Token=token
- if kind~="observer" and O.StormController then O.StormController.Destroy();O.StormController=nil end
  if changed then O.Disconnect();O.NextConnect=0 end
 end
 function O.Release(owner)
@@ -192,37 +188,6 @@ function O.Header(kind,moduleId,revision)
  return {version=1,type=kind,moduleId=moduleId,sessionId=O.Session,revision=revision,
  placeId=tostring(game.PlaceId),jobId=game.JobId}
 end
-local function observeStormEvents()
- local cave=O.StormheartCave
- if not cave then
-  local sharedModules=RS:FindFirstChild("Shared")
-  local util=sharedModules and sharedModules:FindFirstChild("Util")
-  local module=util and util:FindFirstChild("StormheartCave")
-  if module then
-   local ok,result=pcall(require,module)
-   if ok and type(result)=="table" then cave=result;O.StormheartCave=cave end
-  end
- end
- local rush
- if cave and type(cave.State)=="function" then
-  local ok,state=pcall(cave.State)
-  if ok and (state=="Charging" or state=="Rush") then rush=state end
- end
- local folder=workspace:FindFirstChild("StormheartRockfallLocal")
- local rocks=folder and folder:FindFirstChild("Rocks")
- local stormglass=false
- if rocks then
-  for _,rock in ipairs(rocks:GetChildren()) do
-   if rock:GetAttribute("StormheartInfused")==true or rock:FindFirstChild("InfusedFx") then
-    stormglass=true;break
-   end
-  end
- end
- if O.Stormglass~=stormglass or O.StormRush~=rush then
-  O.Stormglass=stormglass;O.StormRush=rush;O.PlayerDirty=true;O.ForcePlayers=true
- end
-end
-
 function O.Players()
  local rows,incomes={},{}
  local snapshot=O.Roster and safe(O.Roster.ReadSnapshot)
@@ -348,8 +313,6 @@ function O.OpenSocket()
      if message.accepted==true and message.sessionId==O.Session and message.revision==O.EggRevision then
       O.EggAckRevision=message.revision;O.Status("Observation transmise",true)
      end
-    elseif message.type=="observer.storm-options" and O.ClientKind=="observer" then
-     O.StormOptions={stormglass=message.stormglass==true,stormRush=message.stormRush==true}
     elseif message.type=="observer.spread"then O.ReceiveSpread(message.target)
     elseif message.type=="observer.go-to-admin"then O.ReceiveSpread(message.target,true)
     elseif message.type=="observer.group"then O.ReceiveSpread(message.target,true,true)
@@ -365,46 +328,12 @@ end
 O.Connect(game:GetService("TeleportService").TeleportInitFailed,function(target)
  if target==player and O.SpreadTeleportAt then O.SpreadTeleportAt=nil;O.SpreadRetryAt=os.clock()+60 end
 end)
-local function updateStormAutomation(now)
- if O.ClientKind~="observer" then return end
- local options=O.StormOptions
- local allowed=O.Ready and not O.SpreadTeleportAt and not O.ClickBusy
-  and not (O.SpreadTarget and O.SpreadTarget.group and now<O.SpreadTarget.deadline)
- local stormglass=allowed and options and options.stormglass==true
- local stormRush=allowed and options and options.stormRush==true
- if O.StormController then
-  O.StormController.Configure(stormglass,stormRush)
- elseif (stormglass or stormRush) and not O.StormLoading and now>=(O.NextStormLoad or 0) then
-  O.StormLoading=true
-  task.spawn(function()
-   local ok,result=pcall(function()
-    local source=game:HttpGet("https://raw.githubusercontent.com/cagnastylepay-png/SEA_V2/main/Scripts/GameplayEngine.lua")
-    local run,why=loadstring(source,"SEA_V2/ObserverStorm")
-    assert(run,why)
-    return run("observer-storm")
-   end)
-   O.StormLoading=false
-   if ok and type(result)=="table" and type(result.Configure)=="function" then
-    if O.Destroyed or O.ClientKind~="observer" then result.Destroy() else O.StormController=result end
-   else
-    O.NextStormLoad=os.clock()+30
-    warn("[Observer] Stormglass / Storm Rush : "..tostring(result))
-   end
-  end)
- end
-end
-
 O.Refresh()
 task.spawn(function()
  while not O.Destroyed do
   local now=os.clock()
   O.TickSpread(now)
-  updateStormAutomation(now)
-  if O.ClientKind=="observer" and not O.SpreadTeleportAt then
-   O.TickClicks(now,function()
-    return O.ClientKind=="observer" and not O.SpreadTeleportAt and not (O.StormController and O.StormController.Busy)
-   end)
-  end
+  if O.ClientKind=="observer" and not O.SpreadTeleportAt then O.TickClicks(now)end
   local cycle=tostring(O.Cycle.ActivePeriodIndexAt(O.Clock.Now()))
   if cycle~=O.CurrentCycle then O.CurrentCycle=cycle;O.Refresh()end
   if not O.Syncing and O.SnapshotCycle~=cycle and now>=(O.NextSync or 0)then O.Refresh()end
@@ -412,10 +341,6 @@ task.spawn(function()
   if O.Connecting and now-O.LastAck>20 then O.Disconnect()end
   if O.PendingAt and now-O.PendingAt>25 then O.PendingAt=nil;O.Disconnect()end
   if O.Ready and game.JobId~=""then
-   if O.ClientKind=="observer" and now>=(O.NextStormObservation or 0) then
-    O.NextStormObservation=now+1
-    observeStormEvents()
-   end
    local refreshCapacity=O.ClientKind=="admin" and now>=(O.NextCapacityReport or 0)
    if (O.PlayerDirty or refreshCapacity) and now-(O.LastPlayers or 0)>=1 then
     local rows=O.Players();local fingerprint=Http:JSONEncode(rows)
@@ -424,7 +349,6 @@ task.spawn(function()
      local message=O.Header("players.snapshot","PlayerReporter",O.PlayerRevision)
      message.reporterUserId=tostring(player.UserId)
      if O.ClientKind=="admin" then message.maxPlayers=Players.MaxPlayers end
-     if O.ClientKind=="observer" then message.stormglass=O.Stormglass==true;message.stormRush=O.StormRush end
      if O.Send(message,"players",rows)then O.NextCapacityReport=now+15;O.PlayerFingerprint=fingerprint;O.ForcePlayers=false;O.PendingAt=O.PendingAt or now end
     end
     O.PlayerDirty=false;O.LastPlayers=now
