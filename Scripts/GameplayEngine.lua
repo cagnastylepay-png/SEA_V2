@@ -2923,6 +2923,14 @@ function FusionModules.YieldToSpawnedEggs()
  return false
 end
 
+function FusionModules.Helpers.CanAutoOpen(record)
+ if FusionModules.AdminCollection then
+  local runtime=FusionModules.AdminRuntime
+  return runtime and runtime.CountConsumableMutations and runtime.CountConsumableMutations(record)>6
+ end
+ return FusionModules.Helpers.InIncomeRange("AutoOpen",getRatePerSecond(record))
+end
+
 local function hatchReadyEggsOnWallClose(token)
  if not FusionModules.Options.AutoOpen then return 0 end
 	if hatchInProgress or not PlacedEggRenderer or not EggGrowthPolicy then return end
@@ -2933,8 +2941,7 @@ local function hatchReadyEggsOnWallClose(token)
 	for uid, record in pairs(eggs) do
 		if type(uid) == "string" and type(record) == "table" and record.Placement ~= nil then
 			local valid, _, grown = pcall(FusionModules.Helpers.PlotEggCountdown, record)
-			local rate = getRatePerSecond(record)
-			if valid and grown and rate and rate >= FusionModules.Options.AutoOpenMin and rate <= FusionModules.Options.AutoOpenMax then table.insert(readyUids, uid) end
+			if valid and grown and FusionModules.Helpers.CanAutoOpen(record) then table.insert(readyUids, uid) end
 		end
 	end
 	table.sort(readyUids)
@@ -2945,13 +2952,12 @@ local function hatchReadyEggsOnWallClose(token)
 		if readOK and type(latest) == "table" and latest.Placement ~= nil then
 			local seconds;readyOK, seconds, grown = pcall(FusionModules.Helpers.PlotEggCountdown, latest)
 		end
-		local rate = readOK and type(latest) == "table" and getRatePerSecond(latest)
   local holdForMutation=false
   if FusionModules.Options.AutoMutations then
    local runtime=FusionModules.AdminRuntime
    holdForMutation=not runtime or not runtime.Initialized or runtime.ShouldHoldEgg(uid)
   end
-		if not holdForMutation and readyOK and grown and rate and rate >= FusionModules.Options.AutoOpenMin and rate <= FusionModules.Options.AutoOpenMax then
+		if not holdForMutation and readyOK and grown and FusionModules.Helpers.CanAutoOpen(latest) then
 			hatchInProgress = true
 			setStatus("Ouverture des oeufs prets...")
 			local activated, accepted, reason = pcall(PlacedEggRenderer.ActivateLocalEgg, uid)
