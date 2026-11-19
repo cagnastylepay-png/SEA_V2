@@ -97,7 +97,7 @@ return function(ctx)
   local stock=mutationTools()[id];assert(stock and stock.count>0,"Consommable absent")
   local key=uid..":"..id;local entries=ledger().entries;local entry=entries[key]or{count=0}
   assert(not entry.blocked and entry.count<maxAttempts,"Limite atteinte ou resultat incertain")
-  if not entries[key]then local n=0;for _ in pairs(entries)do n+=1 end;assert(n<2000,"Journal des essais plein")end
+  if manual and not entries[key]then local n=0;for _ in pairs(entries)do n+=1 end;assert(n<2000,"Journal des essais plein")end
   local character=assert(player.Character,"Personnage absent");local humanoid=assert(character:FindFirstChildOfClass("Humanoid"),"Personnage absent")
   local tool=stock.tools[1];A.MutationTool=tool;humanoid:EquipTool(tool)
   assert(waitUntil(function()return tool.Parent==character end,3),"Consommable non equipe")
@@ -107,7 +107,7 @@ return function(ctx)
   -- Reserve and persist BEFORE dispatch: an interrupted request must never be retried blindly.
   entry.count+=1;entry.blocked=true;entries[key]=entry;saveLedger()
   A.Dispatched=true
-  A.MutationStatus="Essai "..entry.count.."/"..maxAttempts.." : "..id.." sur "..uid
+  A.MutationStatus="Essai "..entry.count..(manual and "/"..maxAttempts or "").." : "..id.." sur "..uid
   local ok,result=pcall(function()return A.Remotes.BossMastery.AskUseMutationConsumable:InvokeServer(uid)end)
   releaseMutationTool()
   assert(ok and type(result)=="table"and result.Success==true,"Resultat mutation non confirme : aucune relance")
@@ -115,9 +115,11 @@ return function(ctx)
   if result.Mutated==true then
    assert(waitUntil(function()local r=ownedEggs()[uid];return r and hasMutation(r,id)end,12),"Mutation en attente de synchronisation")
    A.MutationStatus=id.." appliquee a "..uid
-  elseif result.Mutated==false then A.MutationStatus=id.." : essai echoue "..entry.count.."/"..maxAttempts
+  elseif result.Mutated==false then A.MutationStatus=id.." : essai echoue "..entry.count..(manual and "/"..maxAttempts or "")
   else error("Resultat mutation incomplet : aucune relance")end
-  entry.blocked=false;saveLedger();A.Signature=nil
+  entry.blocked=false
+  if not manual then entries[key]=nil end
+  saveLedger();A.Signature=nil
   return true
  end
  function A.MutateNext()
@@ -132,13 +134,12 @@ return function(ctx)
   table.sort(candidates,function(a,b)return a.rate>b.rate end)
   local stock=mutationTools()
   for _,candidate in ipairs(candidates)do for _,id in ipairs(mutationIds)do
-   local prefix="Mutation"..id;local entry=ledger().entries[candidate.uid..":"..id]
-   if options[prefix.."Enabled"]and candidate.rate>options[prefix.."Min"]and stock[id].count>0 and not hasMutation(candidate.record,id)
-    and(not entry or not entry.blocked and entry.count<options[prefix.."Attempts"])then
+   local entry=ledger().entries[candidate.uid..":"..id]
+   if stock[id].count>0 and not hasMutation(candidate.record,id) and (not entry or not entry.blocked) then
     if os.clock()<(A.NextMutationAt or 0)then return true end
     A.NextMutationAt=os.clock()+2
     local lock={mutation=true};A.Busy=true;shared.__SEAAdminRequestLock=lock
-    local ok,why=pcall(A.ApplyMutation,candidate.uid,id,options[prefix.."Attempts"])
+    local ok,why=pcall(A.ApplyMutation,candidate.uid,id,math.huge)
     releaseMutationTool();ctx.MutationLock(false);A.Busy=false;if shared.__SEAAdminRequestLock==lock then shared.__SEAAdminRequestLock=nil end
     if not ok then A.MutationStatus=tostring(why):sub(1,500);warn("[SEA Admin] "..A.MutationStatus)end
     pcall(A.Publish,true);return true
@@ -150,11 +151,10 @@ return function(ctx)
   local options=ctx.GetOptions();if not options.AutoMutations then return false end
   if not A.Initialized then return true end
   local record=ownedEggs()[uid];if not record or not record.Placement then return false end
-  local item=safe(A.EggRecords.ToAssetItemData,record);local rate=item and metric(safe(A.Earnings.RatePerSecond,item));if not rate then return false end
   local stock=mutationTools()
   for _,id in ipairs(mutationIds)do
-   local prefix="Mutation"..id;local entry=ledger().entries[uid..":"..id]
-   if options[prefix.."Enabled"]and rate>options[prefix.."Min"]and stock[id].count>0 and not hasMutation(record,id)and(not entry or not entry.blocked and entry.count<options[prefix.."Attempts"])then return true end
+   local entry=ledger().entries[uid..":"..id]
+   if stock[id].count>0 and not hasMutation(record,id) and (not entry or not entry.blocked) then return true end
   end
   return false
  end
@@ -406,14 +406,15 @@ return function(ctx)
   if A.Destroyed or not A.Initialized or A.Busy or shared.__SEAAdminRequestLock or not ctx.CanMutate()then return 0 end
   local options=ctx.GetOptions();if not options.AutoSellAnimals then return 0 end
   local pending=shared.__SEAAnimalSalesPending or{};shared.__SEAAnimalSalesPending=pending
+  local weakest=ctx.LowestEquippedRate()
+  if weakest==nil then return 0 end
   local p=profile();for uid in pairs(pending)do if not(p.Inventory or{})[uid]then pending[uid]=nil end end
   local worn=equipped();local ids,names={},{}
   for uid,saved in pairs(p.Inventory or{})do
    if #ids>=64 then break end
    if not pending[uid]and not worn[uid]and not saved.Locked and not saved.IsFavorite and not table.find(p.FusionSlots or{},uid)then
     local item=safe(A.Items.Decode,saved);local rate=item and metric(safe(A.Earnings.RatePerSecond,item))
-    if rate and rate>=options.AutoSellAnimalsMin and rate<=options.AutoSellAnimalsMax
-     and (not options.AutoIndex or (type(p.Index)=="table"and p.Index[item.Category]==true))then
+    if rate and rate<weakest/2 and not ctx.IsDivine(item.Category) then
      table.insert(ids,uid);table.insert(names,tostring(item.Category).." ("..uid..", "..tostring(rate).."/s)")
     end
    end
