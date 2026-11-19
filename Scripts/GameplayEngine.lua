@@ -1,5 +1,6 @@
+local observerStorm = ... == "observer-storm"
 -- Preserve Admin when an executor also auto-loads Hub after a teleport.
-do
+if not observerStorm then
  local options=shared.__AutoSAEReportingOptions
  if not(type(options)=="table"and options.ClientKind=="admin")then
   if shared.__SEAAdminBoot or(shared.__SEA_V2Admin and not shared.__SEA_V2Admin.Destroyed)then return shared.__AutoSAEController end
@@ -320,7 +321,7 @@ function executorTools.WithPromptReach(prompt,reach,activate)
  if not ok then return false,activated end
  return activated,reason
 end
-shared.__AutoSAEExecutorTools = executorTools
+if not observerStorm then shared.__AutoSAEExecutorTools = executorTools end
 
 executorTools.RemoteLogQueue={}
 executorTools.RemoteLogSequence=0
@@ -2030,8 +2031,8 @@ end
 
 -- Help favorites only authorize assistance; they never receive Admin privileges or GO.
 FusionModules.Help={DropRequest=shared.__SEAHelpDropRequest}
-shared.__SEAHelpDelivered=shared.__SEAHelpDelivered or{}
-shared.__SEAHelpActive=shared.__SEAHelpActive or{}
+if not observerStorm then shared.__SEAHelpDelivered=shared.__SEAHelpDelivered or{} end
+if not observerStorm then shared.__SEAHelpActive=shared.__SEAHelpActive or{} end
 FusionModules.Help.Delivered=shared.__SEAHelpDelivered
 FusionModules.Help.Active=shared.__SEAHelpActive
 function FusionModules.Help.Key(uid)return tostring(game.JobId)..":"..tostring(uid)end
@@ -2481,7 +2482,7 @@ function FusionModules.Arrival.Waiting()
  end
  return true
 end
-FusionModules.Arrival.Load()
+if not observerStorm then FusionModules.Arrival.Load() end
 
 local function selectBest()
 	local best, bestRate = nil, -math.huge
@@ -3254,7 +3255,7 @@ function FusionModules.Helpers.inventoryEggsBelowMinimum(eggs)
 end
 
 FusionModules.SalesPending=shared.__SEAInventorySalesPending or{}
-shared.__SEAInventorySalesPending=FusionModules.SalesPending
+if not observerStorm then shared.__SEAInventorySalesPending=FusionModules.SalesPending end
 local function sellInventoryEggsBelowMinimum(token)
  if not FusionModules.Options.AutoSell then return end
 	if FusionModules.Pending() or not EggSaleRemote or inventoryPlacementBusy or placementRequest or currentCycle
@@ -3755,7 +3756,7 @@ end
 FusionModules.Skyfall={RetryAt=0, Tags=game:GetService("CollectionService")}
 
 function FusionModules.Skyfall.Rocks()
- if FusionModules.Reporting.ClientKind~="admin" or not (FusionModules.Options.AutoSkyfall or FusionModules.Options.AutoStormGlass) then return nil end
+ if (not observerStorm and FusionModules.Reporting.ClientKind~="admin") or not (FusionModules.Options.AutoSkyfall or FusionModules.Options.AutoStormGlass) then return nil end
  local folder=Workspace:FindFirstChild("StormheartRockfallLocal")
  local rocks=folder and folder:FindFirstChild("Rocks")
  if rocks and #rocks:GetChildren()>0 then return rocks end
@@ -4067,7 +4068,7 @@ FusionModules.StormRush={RetryAt=0}
 
 function FusionModules.StormRush.Bind(remotes)
  local rush=FusionModules.StormRush
- if FusionModules.Reporting.ClientKind~="admin" or not remotes.StormheartCave then return end
+ if (not observerStorm and FusionModules.Reporting.ClientKind~="admin") or not remotes.StormheartCave then return end
  rush.Util=require(ReplicatedStorage.Shared.Util.StormheartCave)
  rush.Flags=require(ReplicatedStorage.Shared.Flags.StormheartCaveFlags)
  rush.Remotes=remotes.StormheartCave
@@ -4096,6 +4097,7 @@ function FusionModules.Helpers.CanStartIdleActivity()
 end
 
 function FusionModules.Helpers.TreadmillOnly()
+ if observerStorm then return FusionModules.Helpers.CanStartIdleActivity() and not FusionModules.Skyfall.Available() end
  return FusionModules.Options.AutoTreadmill and FusionModules.Helpers.CanStartIdleActivity()
   and not FusionModules.Helpers.FishingMode() and not FusionModules.Skyfall.Available()
   and not FusionModules.Butterflies.Available()
@@ -4187,6 +4189,7 @@ do
  end
  local function press(prompt,token,valid)
   if not prompt or not prompt.Enabled or not approach(promptPosition(prompt),prompt.MaxActivationDistance,token,valid) then return false end
+  if observerStorm then return executorTools.ActivateNativePrompt(prompt) end
   return executorTools.FirePrompt(prompt)
  end
  local function equipGlass(character,humanoid)
@@ -4394,10 +4397,19 @@ do
    end
    local function sameCharacter()return activityValid(token,character)end
    local promptReach=math.max(reach,prompt.MaxActivationDistance+4)
-   local activated=executorTools.WithPromptReach(prompt,promptReach,executorTools.FirePrompt)
+   local activated
+   if observerStorm then
+    activated=press(prompt,token,sameCharacter)
+   else
+    activated=executorTools.WithPromptReach(prompt,promptReach,executorTools.FirePrompt)
+   end
    local entered=activated and waitFor(rush.Inside,5,sameCharacter)
    if not entered and inReach() and not rush.Inside() then
-    executorTools.WithPromptReach(prompt,promptReach,executorTools.ActivateNativePrompt)
+    if observerStorm then
+     press(prompt,token,sameCharacter)
+    else
+     executorTools.WithPromptReach(prompt,promptReach,executorTools.ActivateNativePrompt)
+    end
     entered=waitFor(rush.Inside,10,sameCharacter)
    end
    if not entered and not rush.Inside() then
@@ -4480,7 +4492,12 @@ do
    -- An executor call can return successfully without triggering the prompt.
    -- Use the game's native hold on the next approach if nothing changed.
    local activate=attempt==2 and executorTools.ActivateNativePrompt or executorTools.FirePrompt
-   local activated,reason=executorTools.WithPromptReach(prompt,promptReach,activate)
+   local activated,reason
+   if observerStorm then
+    activated=press(prompt,token,active)
+   else
+    activated,reason=executorTools.WithPromptReach(prompt,promptReach,activate)
+   end
    if waitFor(changed,4,active) then return true end
    if not activated then return false,"activation du prompt : "..tostring(reason) end
    return false,"insertion non confirmée par le jeu"
@@ -5515,6 +5532,54 @@ function FusionModules.RemoteHop.Try()
  end)
  return true
 end
+if observerStorm then
+ local controller={Busy=false}
+ local function disconnect()
+  for _,connection in ipairs(lifetimeConnections) do connection:Disconnect() end
+  table.clear(lifetimeConnections)
+ end
+ function controller.Configure(stormglass,stormRush)
+  FusionModules.Options.AutoStormGlass=stormglass==true
+  FusionModules.Options.AutoStormRush=stormRush==true
+ end
+ function controller.Destroy()
+  if destroyed then return end
+  destroyed=true
+  autoEnabled=false
+  generation+=1
+  disconnect()
+  if controller.Busy then stopMovement() end
+ end
+
+ GuardGeometry=loadModule("Shared.Util.GuardAreaGeometry")
+ FusionModules.GameplayGuard=loadModule("Client.ToolGameplayGuard")
+ Save=loadModule("Shared.Save")
+ FusionModules.BatCombat.Directory=loadModule("Data.Gears").Directory
+ FusionModules.StormRush.Bind(loadModule("Shared.Remotes"))
+ FusionModules.StormRush.Managed=false
+ autoEnabled=true
+ task.spawn(function()
+  local rush,sky=FusionModules.StormRush,FusionModules.Skyfall
+  while not destroyed do
+   local token=generation
+   controller.Busy=true
+   if rush.Managed and rush.Inside() then
+    FusionModules.Protect("OBSERVER_STORM_EXIT",rush.Exit,token)
+    rush.Managed=rush.Inside()
+   elseif rush.Available(true) then
+    rush.Idle(token)
+   elseif sky.Available() then
+    sky.Idle(token)
+   elseif rush.Available() then
+    rush.Idle(token)
+   end
+   controller.Busy=false
+   task.wait(0.25)
+  end
+ end)
+ return controller
+end
+
 do
  local elapsed=0
  connect(RunService.Heartbeat,function(dt)
