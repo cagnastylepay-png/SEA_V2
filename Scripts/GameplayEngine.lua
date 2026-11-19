@@ -89,7 +89,7 @@ FusionModules.AdminCollection = type(shared.__AutoSAEReportingOptions) == "table
  and shared.__AutoSAEReportingOptions.ClientKind == "admin"
 FusionModules.Options={AutoEggs=true,AutoEggsMin=2e9,AutoEggsMax=999e9,
  AutoTreadmill=true,AutoSell=true,AutoSellMin=0,AutoSellMax=2e9,
- AutoFuse=true,AutoFuseMin=0,AutoFuseMax=1e33,AutoOpen=true,AutoOpenMin=0,AutoOpenMax=20e9,AutoPlace=true,AutoPlaceMin=2e9,AutoPlaceMax=1e33,AutoPapillon=true,AutoEquipBest=true,AutoIndex=true,TeleportInstantMin=50e9}
+ AutoFuse=true,AutoFuseMin=0,AutoFuseMax=1e33,AutoOpen=true,AutoOpenMin=0,AutoOpenMax=20e9,AutoPlace=true,AutoPlaceMin=2e9,AutoPlaceMax=1e33,AutoPapillon=true,AutoEquipBest=true,AutoIndex=true}
 
 function FusionModules.Helpers.InIncomeRange(key,rate)
  if FusionModules.AdminCollection and key=="AutoFuse" then return true end
@@ -5435,15 +5435,15 @@ function FusionModules.RemoteHop.Try()
    return true
   end
  end
- local fishingDeparture=FusionModules.Helpers.FishingActive()
- local immediate=fishingDeparture or request.Forced or request.Target.incomePerSecond>=FusionModules.Options.TeleportInstantMin
- if not immediate then
-  if next(queuedEggs)~=nil or currentCycle or inventoryPlacementBusy or placementRequest or hatchInProgress or FusionModules.Pending() or (inFlightRequest and not inFlightRequest.done)then
-   hop.Note("waiting:"..tostring(request.Id),"Teleportation en attente : file locale ou action en cours",request.Target)
+ if not request.Forced then
+  if currentCycle or inventoryPlacementBusy or placementRequest or hatchInProgress or FusionModules.Pending()
+   or (inFlightRequest and not inFlightRequest.done) then return false end
+  if selectBest() then
+   hop.Note("waiting:"..tostring(request.Id),"Teleportation en attente : oeuf eligible sur ce serveur",request.Target)
    return false
   end
   local carry=readCarry()
-  if not carry or carry.IsCarrying then hop.Note("carrying:"..tostring(request.Id),"Teleportation en attente : oeuf porte ou etat du portage indisponible",request.Target);return false end
+  if not carry or carry.IsCarrying then return false end
  end
  hop.Processing=true
  task.spawn(function()
@@ -5461,7 +5461,15 @@ function FusionModules.RemoteHop.Try()
     local carry=readCarry()
     if currentCycle or (inFlightRequest and not inFlightRequest.done) or not carry or carry.IsCarrying then hop.Processing=false;return end
    end
-   if not immediate and (next(queuedEggs)~=nil or currentCycle)then hop.Processing=false;return end
+   if not request.Forced then
+    syncQueue()
+    local carry=readCarry()
+    if currentCycle or selectBest() or not carry or carry.IsCarrying or inventoryPlacementBusy or placementRequest
+     or hatchInProgress or FusionModules.Pending() or (inFlightRequest and not inFlightRequest.done) then
+     hop.Processing=false
+     return
+    end
+   end
    local target=request.Target
    if FusionModules.AdminRuntime and FusionModules.AdminRuntime.Fishing then FusionModules.AdminRuntime.StopFishing()end
    -- Cancel old generation before dispatch so movement and optional actions cannot restart.
@@ -5476,7 +5484,7 @@ function FusionModules.RemoteHop.Try()
    FusionModules.Reporting.MarkSettingsDirty()
    local description=string.format("%s [Poids=%s kg; Revenu=%s/s]",tostring(target.name or target.category or target.uid),(type(target.weightKg)=="number"and formatNumber(target.weightKg)or "inconnu"),formatNumber(target.incomePerSecond))
    setStatus("Teleportation vers "..description)
-   log("SERVER_CHANGE","Quitter le serveur %s -> %s pour %s Mode=%s",game.JobId,target.jobId,description,request.Forced and "GO manuel force"or (immediate and "immediat"or "file vide"))
+   log("SERVER_CHANGE","Quitter le serveur %s -> %s pour %s Mode=%s",game.JobId,target.jobId,description,request.Forced and "demande manuelle" or "aucun oeuf eligible local")
    pcall(function()game:GetService("TeleportService"):SetTeleportSetting("OvoraRemoteArrival",{jobId=target.jobId,fromJobId=game.JobId,uid=target.uid,name=target.name,weightKg=target.weightKg,incomePerSecond=target.incomePerSecond,clientKind=FusionModules.Reporting.ClientKind,reporterUserId=tostring(player.UserId),manualSteal=request.ManualSteal,expiresAt=os.time()+(request.ManualSteal and math.max(1,math.ceil(request.Deadline-os.clock())) or 300)})end)
    FusionModules.Reporting.FlushLogs()
    local connection
