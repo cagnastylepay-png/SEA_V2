@@ -5582,6 +5582,21 @@ do
  end)
 end
 
+if FusionModules.Reporting.ClientKind=="admin" then
+ local function canClickOnTreadmill()
+  return ready and not destroyed and automaticMode and autoEnabled and not queuePaused and not stopAfterFlight
+   and treadmillAssigned and not treadmillPending and autoActivity=="TREADMILL"
+   and FusionModules.Options.AutoTreadmill and not currentCycle and not serverHopPending
+   and not FusionModules.FishingBusy and not FusionModules.ManualBusy and not FusionModules.MutationBusy
+ end
+ connect(RunService.Heartbeat,function()
+  local observer=FusionModules.Reporting.Observer
+  if observer and observer.ClientKind=="admin" and observer.TickClicks then
+   observer.TickClicks(os.clock(),canClickOnTreadmill)
+  end
+ end)
+end
+
 -- Repeat return jumps after landing, without overriding the game's speed.
 connect(RunService.Heartbeat, function()
 	if destroyed or not ready then return end
