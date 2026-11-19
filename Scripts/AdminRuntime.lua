@@ -47,6 +47,13 @@ return function(ctx)
   return saved and A.Items.Decode(saved),saved
  end
  local mutationIds={"Boss","Scrambled","Enchanted","Nitro","Spectral","Musical","Alien","DarkMatter","Blacklisted","Copper","Thunderous","GreatBloom"}
+ function A.CountConsumableMutations(record)
+  local count=0
+  for _,id in ipairs(mutationIds) do
+   if table.find(record.Mutations or {},id) then count+=1 end
+  end
+  return count
+ end
  local waitUntil
  local function hasMutation(record,id)return record.BaseMutation==id or table.find(record.Mutations or{},id)~=nil end
  local function mutationTools()
