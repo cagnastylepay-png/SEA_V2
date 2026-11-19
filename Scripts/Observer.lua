@@ -44,10 +44,13 @@ end
 
 -- Render coordinates standalone Observers sharing a server.
 O.SpreadRetryAt=0
-function O.ReceiveSpread(target,manual)
+function O.ReceiveSpread(target,manual,group)
  if O.Destroyed or O.ClientKind~="observer"then return end
  if not manual and O.SpreadTarget and O.SpreadTarget.manual and os.clock()<O.SpreadTarget.deadline then return end
- if target==nil then O.SpreadTarget=nil;return end
+ if target==nil then
+  if not group or (O.SpreadTarget and O.SpreadTarget.group) then O.SpreadTarget=nil end
+  return
+ end
  if type(target)~="table"or target.placeId~=tostring(game.PlaceId)or target.jobId~=game.JobId
   or (not manual and (type(target.keeperUserId)~="string" or not target.keeperUserId:match("^%d+$")
    or target.keeperUserId==tostring(player.UserId)))
@@ -55,7 +58,7 @@ function O.ReceiveSpread(target,manual)
   or target.destinationJobId==game.JobId then return end
  local delay=tonumber(target.delaySeconds)
  if not delay or delay~=delay or delay<0 or delay>900 then return end
- O.SpreadTarget={keeperUserId=target.keeperUserId,jobId=target.jobId,destinationJobId=target.destinationJobId,manual=manual==true,deadline=manual and os.clock()+30 or nil}
+ O.SpreadTarget={keeperUserId=target.keeperUserId,jobId=target.jobId,destinationJobId=target.destinationJobId,manual=manual==true,group=group==true,deadline=manual and os.clock()+30 or nil}
  O.SpreadAt=os.clock()+delay+(manual and 0 or math.random(0,8))
 end
 function O.TickSpread(now)
@@ -349,6 +352,7 @@ function O.OpenSocket()
      O.StormOptions={stormglass=message.stormglass==true,stormRush=message.stormRush==true}
     elseif message.type=="observer.spread"then O.ReceiveSpread(message.target)
     elseif message.type=="observer.go-to-admin"then O.ReceiveSpread(message.target,true)
+    elseif message.type=="observer.group"then O.ReceiveSpread(message.target,true,true)
     elseif message.type=="reporting.policy"then O.LastPolicy=message
     end
     for callback in pairs(O.Listeners)do local handled,why=pcall(callback,message);if not handled then warn("[Observer] Client callback : "..tostring(why))end end
@@ -365,6 +369,7 @@ local function updateStormAutomation(now)
  if O.ClientKind~="observer" then return end
  local options=O.StormOptions
  local allowed=O.Ready and not O.SpreadTeleportAt and not O.ClickBusy
+  and not (O.SpreadTarget and O.SpreadTarget.group and now<O.SpreadTarget.deadline)
  local stormglass=allowed and options and options.stormglass==true
  local stormRush=allowed and options and options.stormRush==true
  if O.StormController then
@@ -411,14 +416,16 @@ task.spawn(function()
     O.NextStormObservation=now+1
     observeStormEvents()
    end
-   if O.PlayerDirty and now-(O.LastPlayers or 0)>=1 then
+   local refreshCapacity=O.ClientKind=="admin" and now>=(O.NextCapacityReport or 0)
+   if (O.PlayerDirty or refreshCapacity) and now-(O.LastPlayers or 0)>=1 then
     local rows=O.Players();local fingerprint=Http:JSONEncode(rows)
-    if O.ForcePlayers or fingerprint~=O.PlayerFingerprint then
+    if O.ForcePlayers or refreshCapacity or fingerprint~=O.PlayerFingerprint then
      O.PlayerRevision=O.PlayerRevision+1
      local message=O.Header("players.snapshot","PlayerReporter",O.PlayerRevision)
      message.reporterUserId=tostring(player.UserId)
+     if O.ClientKind=="admin" then message.maxPlayers=Players.MaxPlayers end
      if O.ClientKind=="observer" then message.stormglass=O.Stormglass==true;message.stormRush=O.StormRush end
-     if O.Send(message,"players",rows)then O.PlayerFingerprint=fingerprint;O.ForcePlayers=false;O.PendingAt=O.PendingAt or now end
+     if O.Send(message,"players",rows)then O.NextCapacityReport=now+15;O.PlayerFingerprint=fingerprint;O.ForcePlayers=false;O.PendingAt=O.PendingAt or now end
     end
     O.PlayerDirty=false;O.LastPlayers=now
    end
