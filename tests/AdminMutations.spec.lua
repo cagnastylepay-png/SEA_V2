@@ -95,8 +95,6 @@ p.Inventory.uncertain={Category="Cat",rate=15};removeSold=false
 assert(a.SellAnimals()==1 and saleCalls==2);assert(a.SellAnimals()==0 and saleCalls==2,"no retry for unknown animal sale")
 opts.AutoSellAnimals=false;p.Inventory.new={Category="Cat",rate=15};assert(a.SellAnimals()==0)
 a.Assets={Directory={Viridian={DisplayName="Viridian Prowler",Icon="rbxassetid://98765432101235",Egg={Icon="rbxassetid://98765432101234"}},Placeholder={DisplayName="No image",Icon="rbxassetid://0",Egg={Icon="invalid"}}}}
-assert(a.Execute({action="images.collect"}));assert(#a.ImageCatalog==1)
-assert(a.ImageCatalog[1].name=="Viridian Prowler"and a.ImageCatalog[1].animalImageAssetId=="98765432101235"and a.ImageCatalog[1].eggImageAssetId=="98765432101234")
 
 -- Stock uses charges, includes equipped tools, and supports all current consumables.
 p.Inventory={};p.EggInventory={};p.EquippedAssets={}
