@@ -7,10 +7,11 @@ local Http=game:GetService("HttpService")
 local RS=game:GetService("ReplicatedStorage")
 local player=Players.LocalPlayer
 if not player then return end
--- Minute clicks belong only to standalone Observers; Hub/Admin own their inputs.
+-- Standalone Observers click periodically. Admin supplies its own treadmill guard.
 O.NextClickAt=os.clock()+60
-function O.TickClicks(now)
- if O.Destroyed or O.ClientKind~="observer"then O.NextClickAt=now+60;return end
+function O.TickClicks(now, canClick)
+ canClick=canClick or function()return O.ClientKind=="observer" end
+ if O.Destroyed or not canClick() then O.NextClickAt=now+60;return end
  if O.ClickBusy or now<O.NextClickAt then return end
  O.NextClickAt=now+60
  local env=type(getgenv)=="function"and getgenv()or getfenv()
@@ -21,14 +22,14 @@ function O.TickClicks(now)
  task.spawn(function()
   local held=false
   local ok,why=pcall(function()
-   if O.Destroyed or O.ClientKind~="observer"then return end
+   if O.Destroyed or not canClick() then return end
    local camera=workspace.CurrentCamera
    if camera and type(env.mousemoveabs)=="function"then
     local center=camera.ViewportSize/2
     env.mousemoveabs(math.floor(center.X),math.floor(center.Y))
    end
    for _=1,math.random(3,4)do
-    if O.Destroyed or O.ClientKind~="observer"then break end
+    if O.Destroyed or not canClick() then break end
     if paired then
      held=true;press();task.wait(.03);release();held=false
     else click()end
@@ -328,7 +329,7 @@ task.spawn(function()
  while not O.Destroyed do
   local now=os.clock()
   O.TickSpread(now)
-  if not O.SpreadTeleportAt then O.TickClicks(now)end
+  if O.ClientKind=="observer" and not O.SpreadTeleportAt then O.TickClicks(now)end
   local cycle=tostring(O.Cycle.ActivePeriodIndexAt(O.Clock.Now()))
   if cycle~=O.CurrentCycle then O.CurrentCycle=cycle;O.Refresh()end
   if not O.Syncing and O.SnapshotCycle~=cycle and now>=(O.NextSync or 0)then O.Refresh()end
