@@ -99,6 +99,7 @@ function FusionModules.Helpers.InIncomeRange(key,rate)
 end
 
 FusionModules.Options.AutoSkyfall=false
+FusionModules.Options.GroupMode=false
 FusionModules.Options.AutoStormGlass=false
 FusionModules.Options.AutoSlickRick=false
 FusionModules.Options.AutoStormRush=false
@@ -215,7 +216,7 @@ local queuedEggs = {}
 function FusionModules.Helpers.ShouldRun()
  if FusionModules.Arrival and FusionModules.Arrival.ManualSteal then return true end
  if FusionModules.Reporting.ClientKind=="admin" and player:GetAttribute("InAlienLagoon")==true then return true end
- for key,value in pairs(FusionModules.Options)do if type(value)=="boolean"and value then return true end end
+ for key,value in pairs(FusionModules.Options)do if key~="GroupMode" and type(value)=="boolean"and value then return true end end
  return next(queuedEggs)~=nil
 end
 local removedFromAuto = {}
@@ -411,7 +412,7 @@ local function loadSettings()
 		minimumRatePerSecond = minimum * 1e9
 	end
  for key,value in pairs(FusionModules.Options)do
-  if type(value)=="boolean"and key~="AutoCosmicEclipse"and key~="AutoSkyfall"and key~="AutoStormGlass"and key~="AutoStormRush"and key~="AutoSlickRick"and key~="AutoPlotUpgrade"and key~="AutoTreadmillUpgrade"and key~="AutoHelp"and key~="AutoMutations"and key~="AutoSellAnimals"and not key:match("^Mutation")then FusionModules.Options[key]=automaticMode end
+  if type(value)=="boolean"and key~="AutoCosmicEclipse"and key~="AutoSkyfall"and key~="GroupMode"and key~="AutoStormGlass"and key~="AutoStormRush"and key~="AutoSlickRick"and key~="AutoPlotUpgrade"and key~="AutoTreadmillUpgrade"and key~="AutoHelp"and key~="AutoMutations"and key~="AutoSellAnimals"and not key:match("^Mutation")then FusionModules.Options[key]=automaticMode end
  end
  FusionModules.Options.AutoEggsMin=minimumRatePerSecond
  FusionModules.Options.AutoSellMax=minimumRatePerSecond
