@@ -99,7 +99,7 @@ function FusionModules.Helpers.InIncomeRange(key,rate)
 end
 
 FusionModules.Options.AutoSkyfall=false
-FusionModules.Options.GroupMode=false
+FusionModules.Options.GroupMode=true
 FusionModules.Options.AutoStormGlass=false
 FusionModules.Options.AutoSlickRick=false
 FusionModules.Options.AutoStormRush=false
