@@ -43,18 +43,19 @@ end
 
 -- Render coordinates standalone Observers sharing a server.
 O.SpreadRetryAt=0
-function O.ReceiveSpread(target)
+function O.ReceiveSpread(target,manual)
  if O.Destroyed or O.ClientKind~="observer"then return end
+ if not manual and O.SpreadTarget and O.SpreadTarget.manual and os.clock()<O.SpreadTarget.deadline then return end
  if target==nil then O.SpreadTarget=nil;return end
  if type(target)~="table"or target.placeId~=tostring(game.PlaceId)or target.jobId~=game.JobId
-  or type(target.keeperUserId)~="string"or not target.keeperUserId:match("^%d+$")
-  or target.keeperUserId==tostring(player.UserId)
+  or (not manual and (type(target.keeperUserId)~="string" or not target.keeperUserId:match("^%d+$")
+   or target.keeperUserId==tostring(player.UserId)))
   or type(target.destinationJobId)~="string"or target.destinationJobId==""or #target.destinationJobId>128
   or target.destinationJobId==game.JobId then return end
  local delay=tonumber(target.delaySeconds)
  if not delay or delay~=delay or delay<0 or delay>900 then return end
- O.SpreadTarget={keeperUserId=target.keeperUserId,jobId=target.jobId,destinationJobId=target.destinationJobId}
- O.SpreadAt=os.clock()+delay+math.random(0,8)
+ O.SpreadTarget={keeperUserId=target.keeperUserId,jobId=target.jobId,destinationJobId=target.destinationJobId,manual=manual==true,deadline=manual and os.clock()+30 or nil}
+ O.SpreadAt=os.clock()+delay+(manual and 0 or math.random(0,8))
 end
 function O.TickSpread(now)
  if O.Destroyed or O.ClientKind~="observer"then O.SpreadTarget=nil;return end
@@ -63,10 +64,10 @@ function O.TickSpread(now)
   O.SpreadTeleportAt=nil;O.SpreadRetryAt=now+60
  end
  local target=O.SpreadTarget
+ if target and target.manual and now>=target.deadline then O.SpreadTarget=nil;return end
  if not target or not O.Ready or O.ClickBusy or now<(O.SpreadAt or 0)or now<O.SpreadRetryAt then return end
  if target.jobId~=game.JobId then O.SpreadTarget=nil;return end
- local keeper=Players:GetPlayerByUserId(tonumber(target.keeperUserId))
- if not keeper then O.SpreadTarget=nil;return end
+ if not target.manual and not Players:GetPlayerByUserId(tonumber(target.keeperUserId)) then O.SpreadTarget=nil;return end
  O.SpreadTeleportAt=now;O.SpreadRetryAt=now+60
  task.spawn(function()
   local env=type(getgenv)=="function"and getgenv()or getfenv()
@@ -90,7 +91,8 @@ function O.TickSpread(now)
    task.wait(.1)
   end
   if O.Destroyed or O.ClientKind~="observer"or O.SpreadTarget~=target or not O.Ready
-   or not Players:GetPlayerByUserId(tonumber(target.keeperUserId))then O.SpreadTeleportAt=nil;return end
+   or (target.manual and os.clock()>=target.deadline)
+   or (not target.manual and not Players:GetPlayerByUserId(tonumber(target.keeperUserId)))then O.SpreadTeleportAt=nil;return end
   local ok,why=pcall(function()game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId,target.destinationJobId,player)end)
   if not ok then O.SpreadTeleportAt=nil;warn("[Observer] Changement de serveur : "..tostring(why))end
  end)
@@ -308,6 +310,7 @@ function O.OpenSocket()
       O.EggAckRevision=message.revision;O.Status("Observation transmise",true)
      end
     elseif message.type=="observer.spread"then O.ReceiveSpread(message.target)
+    elseif message.type=="observer.go-to-admin"then O.ReceiveSpread(message.target,true)
     elseif message.type=="reporting.policy"then O.LastPolicy=message
     end
     for callback in pairs(O.Listeners)do local handled,why=pcall(callback,message);if not handled then warn("[Observer] Client callback : "..tostring(why))end end
