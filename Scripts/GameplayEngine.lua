@@ -92,6 +92,7 @@ FusionModules.Options={AutoEggs=true,AutoEggsMin=2e9,AutoEggsMax=999e9,
  AutoFuse=true,AutoFuseMin=0,AutoFuseMax=1e33,AutoOpen=true,AutoOpenMin=0,AutoOpenMax=20e9,AutoPlace=true,AutoPlaceMin=2e9,AutoPlaceMax=1e33,AutoPapillon=true,AutoEquipBest=true,AutoIndex=true,QueueNearest=false,TeleportInstantMin=50e9}
 
 function FusionModules.Helpers.InIncomeRange(key,rate)
+ if FusionModules.AdminCollection and key=="AutoFuse" then return true end
  return type(rate)=="number"and rate==rate and rate<math.huge
   and rate>=FusionModules.Options[key.."Min"]and rate<=FusionModules.Options[key.."Max"]
 end
@@ -178,7 +179,7 @@ function FusionModules.Helpers.RestoreOptions(saved)
  local candidate=table.clone(FusionModules.Options)
  for key,current in pairs(candidate)do
   local derivedCollectionOption = FusionModules.AdminCollection
-   and (key=="AutoEggsMin" or key=="AutoEggsMax" or key=="AutoEggsMaxBiome" or key=="AutoIndex")
+   and (key=="AutoEggsMin" or key=="AutoEggsMax" or key=="AutoEggsMaxBiome" or key=="AutoIndex" or key=="AutoHelp")
   local value
   if not derivedCollectionOption then value=saved[key] end
   if value~=nil then
@@ -193,6 +194,7 @@ function FusionModules.Helpers.RestoreOptions(saved)
  if not FusionModules.Helpers.ValidMaxBiome(candidate.AutoEggsMaxBiome)then return false end
  if not FusionModules.Helpers.ValidHelpFavorites(candidate.HelpFavorites)then return false end
  for _,id in ipairs({"Boss","Scrambled","Enchanted","Nitro","Spectral","Musical","Alien","DarkMatter","Blacklisted","Copper","Thunderous","GreatBloom"})do local n=candidate["Mutation"..id.."Attempts"];if n%1~=0 or n<1 or n>100 then return false end end
+ if FusionModules.AdminCollection then candidate.AutoHelp=false end
  FusionModules.Options=candidate
  minimumRatePerSecond=candidate.AutoEggsMin;autoIncludeMissingIndex=candidate.AutoIndex
  return true
@@ -856,7 +858,6 @@ local function getRarityName(record)
 end
 
 function FusionModules.Helpers.IsAlwaysEligibleRarity(record)
- if FusionModules.AdminCollection then return false end
  local rarity=getRarityName(record)
  return rarity=="Divine"
 end
@@ -905,7 +906,7 @@ end
 function FusionModules.Helpers.RefreshAdminCollection()
  if not FusionModules.AdminCollection or not ready then return end
  local ok,profile=pcall(Save.Peek)
- if not ok or type(profile)~="table" then return end
+ if not ok or type(profile)~="table" then FusionModules.LowestEquippedRate=nil;return end
 
  local lowest
  for _,uid in ipairs(profile.EquippedAssets or {}) do
@@ -923,6 +924,7 @@ function FusionModules.Helpers.RefreshAdminCollection()
 
  local options=FusionModules.Options
  -- Mutations add their bonus above x1: 1 + (2.5 - 1) + (2.5 - 1) = 4.
+ FusionModules.LowestEquippedRate=lowest
  local minimum=lowest and math.min(lowest/4,1e33) or 1e33
  local changed=options.AutoEggsMin~=minimum or options.AutoEggsMax~=1e33
   or options.AutoEggsMaxBiome~="All" or options.AutoIndex~=true
@@ -3071,7 +3073,8 @@ function FusionModules.Helpers.MissingFromIndex(egg)
  if not ok or type(profile)~="table"or type(profile.Index)~="table"or type(category)~="string"then return nil end
  return profile.Index[category]~=true
 end
-function FusionModules.Helpers.CanPlaceInventoryEgg(egg)
+function FusionModules.Helpers.CanPlaceInventoryEgg(egg, uid)
+ if FusionModules.AdminCollection then return not (FusionModules.SalesPending and FusionModules.SalesPending[uid]) end
  return FusionModules.Helpers.MissingFromIndex(egg)==true or FusionModules.Helpers.InIncomeRange("AutoPlace",getRatePerSecond(egg))
 end
 
@@ -3080,7 +3083,7 @@ function FusionModules.Helpers.inventoryPlacementOrder(eggs, selection)
 	for uid, egg in pairs(eggs) do
 		local rate=getRatePerSecond(egg)
 		if not egg.InventoryPlaced and egg.Placement == nil
-			and FusionModules.Helpers.CanPlaceInventoryEgg(egg) and (not selection or selection[uid]) then
+			and FusionModules.Helpers.CanPlaceInventoryEgg(egg,uid) and (not selection or selection[uid]) then
 			table.insert(ids, uid)
 		end
 	end
@@ -3190,7 +3193,7 @@ local function placeInventoryEggsImpl(selection, token, opened)
 			local egg=eggs[uid]
 			local rate=egg and getRatePerSecond(egg)
 			if egg and not egg.InventoryPlaced and egg.Placement==nil
-				and FusionModules.Helpers.CanPlaceInventoryEgg(egg) then
+				and FusionModules.Helpers.CanPlaceInventoryEgg(egg,uid) then
 				local localFrame, point=findPlotEggSpot(plot,eggs,reserved)
 				if not localFrame then summary="Aucun emplacement libre detecte"; break end
 				local request={done=false}
@@ -3201,7 +3204,7 @@ local function placeInventoryEggsImpl(selection, token, opened)
 						if equipped~=true then return false,why end
 						if not valid() then return false,"Placement annule" end
                         local latest=EggState.ReadOwnedEgg(player.UserId,uid)
-                        if not latest or latest.Placement~=nil or not FusionModules.Helpers.CanPlaceInventoryEgg(latest)then
+                        if not latest or latest.Placement~=nil or not FusionModules.Helpers.CanPlaceInventoryEgg(latest,uid)then
                          return false,"Oeuf hors plage ou indisponible"
                         end
 						return EggState.PlantEgg(uid,localFrame)
@@ -3252,13 +3255,16 @@ end
 
 
 function FusionModules.Helpers.inventoryEggsBelowMinimum(eggs)
-	local ids={}
+ FusionModules.Helpers.RefreshAdminCollection()
+ local weakest=FusionModules.LowestEquippedRate
+ local ids={}
 	for uid,egg in pairs(eggs) do
 		local rate=getRatePerSecond(egg)
 		if not egg.InventoryPlaced and egg.Placement==nil and type(rate)=="number"
 			and FusionModules.Helpers.MissingFromIndex(egg)==false
             and (FusionModules.Reporting.ClientKind~="admin"or getRarityName(egg)~="Divine")
-			and rate==rate and rate>=FusionModules.Options.AutoSellMin and rate<=FusionModules.Options.AutoSellMax then
+			and rate==rate and ((FusionModules.AdminCollection and weakest~=nil and rate*4<=weakest)
+             or (not FusionModules.AdminCollection and FusionModules.Helpers.InIncomeRange("AutoSell",rate))) then
 			table.insert(ids,uid)
 		end
 	end
@@ -3326,7 +3332,7 @@ local function fusionBackpackGroups(profile, pen)
 	end
 	local groups={}
 	for uid,saved in pairs(profile.Inventory or {}) do
-		if type(uid)=="string" and type(saved)=="table" and not equipped[uid] then
+		if type(uid)=="string" and type(saved)=="table" and not equipped[uid] and not (shared.__SEAAnimalSalesPending and shared.__SEAAnimalSalesPending[uid]) then
 			local valid,allowed=pcall(FusionModules.Kernel.MayEnterFuse,uid,saved,nil,false,nil)
 			if valid and allowed then
 				local decoded,item=pcall(FusionModules.Items.Decode,saved)
@@ -3590,10 +3596,9 @@ local function serviceWallMaintenanceBody(token)
   if runtime.ProgressPending and runtime.ProgressPending()then return end
   if not FusionModules.BetweenFlights and runtime.ProgressNext and runtime.ProgressNext()then return end
  end
- -- Fill available spots before mutation retries can defer the rest of maintenance.
-	placeInventoryEggs(nil,token,0)
+ if not FusionModules.AdminCollection then placeInventoryEggs(nil,token,0) end
 	if destroyed or not autoEnabled or generation~=token or queuePaused or placementRequest or FusionModules.YieldToSpawnedEggs() then return end
-	if FusionModules.Options.AutoMutations then
+	if not FusionModules.AdminCollection and FusionModules.Options.AutoMutations then
 	 if not FusionModules.AdminRuntime or not FusionModules.AdminRuntime.Initialized then return end
 	 local ok,pending=pcall(FusionModules.AdminRuntime.MutateNext)
 	 if not ok then warn("[SEA Admin] AutoMutations : "..tostring(pending));return end
@@ -3603,11 +3608,18 @@ local function serviceWallMaintenanceBody(token)
 	if destroyed or not autoEnabled or generation ~= token or queuePaused or FusionModules.YieldToSpawnedEggs() then return end
 	sellInventoryEggsBelowMinimum(token)
 	if destroyed or not autoEnabled or generation~=token or queuePaused or FusionModules.YieldToSpawnedEggs() then return end
+ if FusionModules.AdminCollection and (FusionModules.Options.AutoFuse or FusionModules.Options.AutoSellAnimals)
+  and not FusionModules.Helpers.EquipBestForInventory() then return end
  if FusionModules.AdminRuntime and FusionModules.AdminRuntime.Initialized then FusionModules.AdminRuntime.SellAnimals()end
  if destroyed or not autoEnabled or generation~=token or queuePaused or FusionModules.YieldToSpawnedEggs()then return end
 	placeInventoryEggs(nil,token,opened)
 	if destroyed or not autoEnabled or generation ~= token or queuePaused or placementRequest or FusionModules.YieldToSpawnedEggs() then return end
- if FusionModules.Options.AutoEquipBest then FusionModules.Helpers.EquipBestForInventory()end
+ if FusionModules.AdminCollection and FusionModules.Options.AutoMutations and FusionModules.AdminRuntime and FusionModules.AdminRuntime.Initialized then
+  FusionModules.AdminRuntime.MutateNext()
+ end
+ if FusionModules.AdminCollection and FusionModules.Options.AutoFuse then
+  if not FusionModules.Helpers.EquipBestForInventory() then return end
+ elseif FusionModules.Options.AutoEquipBest then FusionModules.Helpers.EquipBestForInventory() end
 	if FusionModules.Ready
         and not destroyed and autoEnabled and generation==token and not queuePaused
         and not FusionModules.YieldToSpawnedEggs() then
@@ -5385,7 +5397,7 @@ function FusionModules.RemoteHop.Validate(target, forced, manualSteal)
  if type(rate)~="number" or rate~=rate or rate<0 or rate>=math.huge then return false end
   local missing=FusionModules.Options.AutoIndex and report.MissingCategories()[target.category]==true
  if not FusionModules.Helpers.AllowedBiome(target)then return false end
- local special=FusionModules.Helpers.FishingActive()and FusionModules.Options.AutoEggs and FusionModules.Helpers.IsAlwaysEligibleRarity({AssetCategory=target.category})
+ local special=FusionModules.Options.AutoEggs and FusionModules.Helpers.IsAlwaysEligibleRarity({AssetCategory=target.category})
  if not missing and not special and not (FusionModules.Options.AutoEggs and rate>=FusionModules.Options.AutoEggsMin and rate<=FusionModules.Options.AutoEggsMax)then return false end
  if (visitedServers[target.jobId]and not(target.jobId==game.JobId and FusionModules.Helpers.FishingActive())) or target.carrierUserId or target.state=="Carried" or target.state=="Claimed" or target.observationOnly then return false end
  return true
@@ -5789,6 +5801,11 @@ shared.__AutoSAEController = {Destroy = destroy, Gui = gui, Reporting = FusionMo
    return result
   end,
   GetOptions=function()return table.clone(FusionModules.Options)end,
+  LowestEquippedRate=function()
+   FusionModules.Helpers.RefreshAdminCollection()
+   return FusionModules.LowestEquippedRate
+  end,
+  IsDivine=function(category)return getRarityName({AssetCategory=category})=="Divine"end,
   BiomeChoices=FusionModules.Helpers.BiomeChoices,
   InventoryNotice=function(text)FusionModules.InventoryNotice=tostring(text):sub(1,500)end,
   BeginManual=function()
