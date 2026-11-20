@@ -4994,12 +4994,8 @@ do
  local function reachPoint(position,token,active)
   local _,_,root=getCharacterParts()
   if not root or not position or not active() then return false,"position du prompt indisponible" end
-  if distanceXZ(root.Position,position)>6 then
-   local reached,reason=FusionModules.Helpers.PathMove(position,token,true)
-   if not reached and distanceXZ(root.Position,position)>6 then return false,reason end
-  end
-  if not active() then return false,"trajet interrompu" end
-  local reached,reason=moveActivity(position,token,true,nil,nil,1.25)
+  local target=Vector3.new(position.X,root.Position.Y,position.Z)
+  local reached,reason=moveActivity(target,token,true,nil,nil,1.25)
   if not reached then return false,reason end
   stopMovement(true)
   RunService.Heartbeat:Wait()
