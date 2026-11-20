@@ -5038,7 +5038,10 @@ do
    point=promptPosition(prompt) or point
    setStatus("Papillons · trajet vers l’Arbre enchanté")
    if not point then error("Coordonnées de l’entrée de l’Arbre enchanté indisponibles",0) end
-   local departed,departureReason=FusionModules.Helpers.DepartSafe(token,active,isSafe(point)==false)
+   local departed,departureReason=true,nil
+   if isSafe(point)==false and not FusionModules.Helpers.GameplayEntryAllowed() then
+    departed,departureReason=FusionModules.Helpers.EnterGameplay(token,active)
+   end
    if not departed then
     if active() then error("Arbre enchanté : "..tostring(departureReason),0) end
     return
