@@ -4917,7 +4917,7 @@ function FusionModules.Helpers.VoidPearlTrade(token)
  autoActivity="IDLE"
 end
 
-FusionModules.ButterflyTrade={RetryAt=0,Uncertain={}}
+FusionModules.ButterflyTrade={RetryAt=0}
 
 do
  local trade=FusionModules.ButterflyTrade
@@ -4943,19 +4943,25 @@ do
   return prompt,point
  end
  local function machine()
-  return findPath("World","Machines","ButterflyStation","ButterflyMachine","Anchor","ProximityPrompt")
+  return findPath("World","Machines","ButterflyStation","MutationShrine","Anchor","ProximityPrompt")
  end
  local function counts()
   local profile=Save.Peek()
   return profile and profile.Butterflies and profile.Butterflies.Counts or {}
  end
  local function recipe()
-  local balance=counts()
-  for _,tier in ipairs({"Purple","Blue","Green"}) do
-   local cost=trade.Catalog.TradeUpCost(tier)
-   local amount=balance[tier] or 0
-   if cost and cost>0 and amount>=cost and trade.Uncertain[tier]~=amount then return tier,amount end
+  local balance,costs=counts(),trade.Catalog.EssenceRecipe()
+  local stock,signature={},{}
+  local requiresButterflies=false
+  for _,tier in ipairs({"Green","Blue","Purple","Golden"}) do
+   local cost,amount=costs[tier],balance[tier] or 0
+   if type(cost)~="number" or cost<0 or type(amount)~="number" or amount<cost then return end
+   requiresButterflies=requiresButterflies or cost>0
+   stock[tier]=amount
+   signature[#signature+1]=tostring(cost).."/"..tostring(amount)
   end
+  local key=table.concat(signature,",")
+  if requiresButterflies and key~=trade.Uncertain then return costs,stock,key end
  end
  function trade.Inside()
   return player:GetAttribute("InEnchantedTree")==true
@@ -5080,50 +5086,56 @@ do
   end
   local prompt
   if not waitFor(function()prompt=machine();return prompt and prompt:IsA("ProximityPrompt") and prompt.Enabled end,5,active) then
-   if active() then error("Prompt de la machine à papillons indisponible",0) end
+   if active() then error("Prompt de la sanctuaire enchanté indisponible",0) end
    return
   end
   local tabs=require(ReplicatedStorage.Client.Tabs)
-  setStatus("Papillons · trajet vers la machine d’échange")
+  setStatus("Papillons · trajet vers le sanctuaire enchanté")
   local opened,reason=reachPrompt(prompt,token,active)
   if not opened then
-   if active() then error("Machine à papillons : "..tostring(reason),0) end
+   if active() then error("Sanctuaire enchanté : "..tostring(reason),0) end
    return
   end
-  if not tabs.IsActive("ButterflyMachine") then
+  if not tabs.IsActive("EnchantedMutationShrine") then
    local fired,fireReason=executorTools.FirePrompt(prompt)
    if not fired then error("Prompt de la machine : "..tostring(fireReason),0) end
   end
   trade.Tabs=tabs
-  if not waitFor(function()return tabs.IsActive("ButterflyMachine")end,4,active) then
-   if active() then error("Interface de la machine à papillons non ouverte",0) end
+  if not waitFor(function()return tabs.IsActive("EnchantedMutationShrine")end,4,active) then
+   if active() then error("Interface de la sanctuaire enchanté non ouverte",0) end
    return
   end
-  local exchange=require(ReplicatedStorage.Shared.Remotes).Butterflies.AskTradeUp
-  while active() and trade.Inside() and tabs.IsActive("ButterflyMachine") do
-   local tier,before=recipe()
-   if not tier then return end
+  local exchange=require(ReplicatedStorage.Shared.Remotes).Butterflies.AskCraftEssence
+  while active() and trade.Inside() and tabs.IsActive("EnchantedMutationShrine") do
+   local costs,before,key=recipe()
+   if not costs then return end
    local _,_,root=getCharacterParts()
-   if not root or (root.Position-promptPosition(prompt)).Magnitude>prompt.MaxActivationDistance then return end
-   setStatus("Papillons · échange en cours")
-   local cost=trade.Catalog.TradeUpCost(tier)
-   trade.Uncertain[tier]=before
-   local accepted,reason=exchange:InvokeServer(tier)
+   local point=promptPosition(prompt)
+   if not root or not point or (root.Position-point).Magnitude>prompt.MaxActivationDistance then return end
+   setStatus("Papillons · fabrication au sanctuaire")
+   trade.Uncertain=key
+   local accepted,reason=exchange:InvokeServer()
    if accepted==false then
-    trade.Uncertain[tier]=nil
+    trade.Uncertain=nil
     error(tostring(reason or "Échange refusé"),0)
    end
    if accepted~=true then error("Réponse d’échange inattendue",0) end
-   if not waitFor(function()return (counts()[tier] or 0)<=before-cost end,8,function()return activityValid(token,character)end) then
+   if not waitFor(function()
+    local remaining=counts()
+    for tier,cost in pairs(costs) do
+     if cost>0 and (remaining[tier] or 0)>before[tier]-cost then return false end
+    end
+    return true
+   end,8,function()return activityValid(token,character)end) then
     error("Échange de papillons : débit non confirmé",0)
    end
-   trade.Uncertain[tier]=nil
+   trade.Uncertain=nil
    task.wait(.45)
   end
  end
  function trade.Idle(token)
   local ok,reason=FusionModules.Protect("BUTTERFLY_TRADE",trade.Run,token)
-  if trade.Tabs and trade.Tabs.IsActive("ButterflyMachine") then pcall(trade.Tabs.Deactivate,{instant=true}) end
+  if trade.Tabs and trade.Tabs.IsActive("EnchantedMutationShrine") then pcall(trade.Tabs.Deactivate,{instant=true}) end
   trade.Tabs=nil
   trade.MoveValid=nil
   trade.RetryAt=os.clock()+(ok and 15 or 120)
