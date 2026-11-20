@@ -5002,14 +5002,14 @@ do
   if not active() or distanceXZ(root.Position,position)>1.5 then return false,"arrêt devant le prompt non confirmé" end
   return true
  end
- local function activate(prompt,token,active)
+ local function reachPrompt(prompt,token,active)
   local position=promptPosition(prompt)
   local reached,reason=reachPoint(position,token,active)
   if not reached then return false,reason end
   local _,_,root=getCharacterParts()
   if not root or not prompt.Enabled or not prompt:IsDescendantOf(Workspace)
    or (root.Position-position).Magnitude>prompt.MaxActivationDistance then return false,"prompt hors de portée ou désactivé" end
-  return executorTools.ActivateNativePrompt(prompt)
+  return true
  end
  function trade.Exit(token)
   local map=markers()
@@ -5058,13 +5058,24 @@ do
     if active() then error("Prompt Entrer indisponible au point d’approche",0) end
     return
    end
-   local fired,detail=activate(prompt,token,active)
-   if not fired then
-    if active() then error("Arbre enchanté : "..tostring(detail),0) end
-    return
+   local function sameCharacter()return activityValid(token,character)end
+   for attempt=1,3 do
+    if not active() or trade.Inside() then break end
+    prompt=entrance()
+    if not prompt or not prompt:IsA("ProximityPrompt") then break end
+    local nearby,detail=reachPrompt(prompt,token,active)
+    if not nearby then
+     if active() then error("Arbre enchanté : "..tostring(detail),0) end
+     return
+    end
+    setStatus(("Arbre enchanté · entrée, tentative %d/3"):format(attempt))
+    prompt:InputHoldBegin()
+    task.wait(math.max(.1,prompt.HoldDuration+.15))
+    prompt:InputHoldEnd()
+    if waitFor(trade.Inside,attempt==3 and 8 or 2,sameCharacter) then break end
    end
-   if not waitFor(trade.Inside,10,function()return activityValid(token,character)end) then
-    if active() then error("Entrée dans l’Arbre enchanté non confirmée",0) end
+   if not trade.Inside() then
+    if active() then error("Le prompt natif n’a pas confirmé l’entrée dans l’Arbre enchanté",0) end
     return
    end
   end
@@ -5075,33 +5086,33 @@ do
   end
   local tabs=require(ReplicatedStorage.Client.Tabs)
   setStatus("Papillons · trajet vers la machine d’échange")
-  local opened,reason=activate(prompt,token,active)
+  local opened,reason=reachPrompt(prompt,token,active)
   if not opened then
    if active() then error("Machine à papillons : "..tostring(reason),0) end
    return
   end
+  require(ReplicatedStorage.Client.GUI).Get("ButterflyMachine")
+  if not tabs.IsActive("ButterflyMachine") then tabs.Activate("ButterflyMachine") end
   trade.Tabs=tabs
   if not waitFor(function()return tabs.IsActive("ButterflyMachine")end,4,active) then
    if active() then error("Interface de la machine à papillons non ouverte",0) end
    return
   end
-  local screen=require(ReplicatedStorage.Client.GUI).Get("ButterflyMachine")
-  local activateButton=assert(executorFunction("firesignal"),"Activation du bouton indisponible")
-  local tradeButton=assert(screen and screen:FindFirstChild("TradeButton",true),"Bouton d’échange introuvable")
-  local recipes={Green="Recipe1",Blue="Recipe2",Purple="Recipe3"}
+  local exchange=require(ReplicatedStorage.Shared.Remotes).Butterflies.AskTradeUp
   while active() and trade.Inside() and tabs.IsActive("ButterflyMachine") do
    local tier,before=recipe()
    if not tier then return end
    local _,_,root=getCharacterParts()
    if not root or (root.Position-promptPosition(prompt)).Magnitude>prompt.MaxActivationDistance then return end
    setStatus("Papillons · échange en cours")
-   local selection=assert(screen:FindFirstChild(recipes[tier],true),"Recette d’échange introuvable")
    local cost=trade.Catalog.TradeUpCost(tier)
-   activateButton(selection.Activated)
-   RunService.Heartbeat:Wait()
-   if not active() or not tabs.IsActive("ButterflyMachine") or (root.Position-promptPosition(prompt)).Magnitude>prompt.MaxActivationDistance then return end
    trade.Uncertain[tier]=before
-   activateButton(tradeButton.Activated)
+   local accepted,reason=exchange:InvokeServer(tier)
+   if accepted==false then
+    trade.Uncertain[tier]=nil
+    error(tostring(reason or "Échange refusé"),0)
+   end
+   if accepted~=true then error("Réponse d’échange inattendue",0) end
    if not waitFor(function()return (counts()[tier] or 0)<=before-cost end,8,function()return activityValid(token,character)end) then
     error("Échange de papillons : débit non confirmé",0)
    end
