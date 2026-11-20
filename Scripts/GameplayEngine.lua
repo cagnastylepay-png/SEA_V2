@@ -4325,31 +4325,11 @@ do
   if not ok then error(err,0) end
  end
 
- function rush.Run(token)
-  local character,humanoid,root=getCharacterParts()
-  if not root or not rush.Available() then return end
-  local util=rush.Util
-  local joiningLive=rush.LiveEvent()
-  local function active()
-   return activityValid(token,character) and automaticMode and FusionModules.Options.AutoStormRush
-    and FusionModules.Helpers.CanStartIdleActivity()
-    and (rush.LiveEvent() or (not joiningLive and FusionModules.Helpers.TreadmillOnly()))
-  end
-  if player:GetAttribute("InAlienLagoon")==true then
-   local runtime=FusionModules.AdminRuntime
-   if not runtime or not runtime.Initialized then return end
-   runtime.StopFishing()
-   setStatus("Storm Rush · retour du lagon")
-   local left,why=runtime.LeaveFishingLagoon()
-   if not left then error(tostring(why or "Sortie du lagon non confirmée"),0) end
-  end
-  local left,why=leaveTreadmill(token)
-  if not left then error(why,0) end
-  if not active() or not rush.Available(joiningLive) then return end
+ local function enterCave(token,character,active)
   autoActivity="STORM_RUSH"
   rush.Managed=true
   if not rush.Inside() then
-   setStatus("Storm Rush · trajet vers la grotte")
+   setStatus("Storm Cave · trajet vers la grotte")
    local _,point=entrance()
    rush.MoveValid=active
    local departed,reason=FusionModules.Helpers.DepartSafe(token,active,point and isSafe(point)==false)
@@ -4407,6 +4387,31 @@ do
     return
    end
   end
+  return rush.Inside()
+ end
+
+ function rush.Run(token)
+  local character,humanoid,root=getCharacterParts()
+  if not root or not rush.Available() then return end
+  local util=rush.Util
+  local joiningLive=rush.LiveEvent()
+  local function active()
+   return activityValid(token,character) and automaticMode and FusionModules.Options.AutoStormRush
+    and FusionModules.Helpers.CanStartIdleActivity()
+    and (rush.LiveEvent() or (not joiningLive and FusionModules.Helpers.TreadmillOnly()))
+  end
+  if player:GetAttribute("InAlienLagoon")==true then
+   local runtime=FusionModules.AdminRuntime
+   if not runtime or not runtime.Initialized then return end
+   runtime.StopFishing()
+   setStatus("Storm Rush · retour du lagon")
+   local left,why=runtime.LeaveFishingLagoon()
+   if not left then error(tostring(why or "Sortie du lagon non confirmée"),0) end
+  end
+  local left,why=leaveTreadmill(token)
+  if not left then error(why,0) end
+  if not active() or not rush.Available(joiningLive) then return end
+  if not enterCave(token,character,active) then return end
   local map,conductor
   local loaded=waitFor(function()
    map=util.LoadedMap()
@@ -4528,6 +4533,123 @@ do
     fly(round,map,humanoid,root,active)
     waitFor(function()return player:GetAttribute(util.Attributes.Floating)~=true end,5,active)
    end
+  end
+ end
+
+ function rush.CanTrade()
+  if not treadmillAssigned or not rush.Flags or os.clock()<(rush.TradeRetryAt or 0)
+   or not FusionModules.Helpers.TreadmillOnly() or rush.Available() or rush.Util.State()~="Idle" then return false end
+  local data=profile()[rush.Util.ProfileKey]
+  local balance=data and data[rush.Util.SparksField]
+  local price=rush.Flags.SparkTradePrice:Get()
+  return type(balance)=="number" and price>0 and balance>=price and balance~=rush.UnconfirmedSparks
+ end
+
+ function rush.TradeSparks(token)
+  local character=getCharacterParts()
+  if not character or not rush.CanTrade() then return end
+  local function active()
+   return activityValid(token,character) and automaticMode and FusionModules.Helpers.TreadmillOnly()
+    and not rush.Available() and rush.Util.State()=="Idle"
+  end
+  local function balance()
+   local data=profile()[rush.Util.ProfileKey]
+   return data and data[rush.Util.SparksField]
+  end
+  local tabs
+  local tabName="StormheartTradeIn"
+  local opened=false
+  local ok,reason=FusionModules.Protect("RUMBLE_TRADE",function()
+   local left,why=leaveTreadmill(token)
+   assert(left,why)
+   if not active() or not enterCave(token,character,active) then return end
+   local prompt
+   if not waitFor(function()
+    local map=rush.Util.LoadedMap()
+    local npcs=map and map:FindFirstChild("Npcs")
+    local rumble=npcs and npcs:FindFirstChild("Rumble")
+    prompt=rumble and rumble:FindFirstChild("TalkPrompt",true)
+    return prompt and prompt:IsA("ProximityPrompt") and prompt.Enabled
+   end,8,active) then error("Prompt de Rumble indisponible",0) end
+   local point=assert(promptPosition(prompt),"Position de Rumble indisponible")
+   local reach=math.min(prompt.MaxActivationDistance,rush.Flags.RumbleReach:Get())
+   setStatus("Sparks · trajet vers Rumble")
+   rush.MoveValid=active
+   local arrived=approach(point,math.max(1,reach-2),token,active)
+   if not arrived and active() then
+    local _,_,root=getCharacterParts()
+    if root then
+     local offset=(root.Position-point)*Vector3.new(1,0,1)
+     local destination=offset.Magnitude>.1 and point+offset.Unit*math.max(1,reach-3) or point
+     FusionModules.Helpers.PathMove(destination,token,true)
+     arrived=active() and approach(point,math.max(1,reach-2),token,active)
+    end
+   end
+   rush.MoveValid=nil
+   if not active() then return end
+   assert(arrived,"Rumble hors de portée")
+   local function inRange()
+    local _,_,root=getCharacterParts()
+    return rush.Inside() and root and prompt:IsDescendantOf(Workspace) and (root.Position-point).Magnitude<=reach
+   end
+   stopMovement(true)
+   RunService.Heartbeat:Wait()
+   if not active() then return end
+   assert(inRange() and prompt.Enabled,"Prompt de Rumble hors de portée")
+   local activate=assert(executorFunction("firesignal"),"Activation du dialogue indisponible")
+   tabs=require(ReplicatedStorage.Client.Tabs)
+   if not tabs.IsActive(tabName) then
+    assert(executorTools.ActivateNativePrompt(prompt))
+    local choice
+    assert(waitFor(function()
+     local gui=player:FindFirstChildOfClass("PlayerGui")
+     local dialog=gui and gui:FindFirstChild("NpcChoices")
+     local choices=dialog and dialog:FindFirstChild("Choices")
+     if not choices then return false end
+     for _,label in ipairs(choices:GetDescendants()) do
+      if label:IsA("TextLabel") and (label:GetAttribute("Text")=="Trade Sparks" or label.Text=="Trade Sparks") then
+       local row=label
+       while row and row.Parent~=choices do row=row.Parent end
+       choice=row and row:FindFirstChildWhichIsA("ImageButton",true)
+       return choice~=nil
+      end
+     end
+     return false
+    end,15,active),"Choix Trade Sparks indisponible")
+    assert(inRange(),"Rumble hors de portée")
+    opened=true
+    activate(choice.Activated)
+    assert(waitFor(function()return tabs.IsActive(tabName)end,10,active),"Écran d’échange non ouvert")
+   end
+   local screen=require(ReplicatedStorage.Client.GUI).Get(tabName)
+   local button=assert(screen and screen:FindFirstChild("TradeButton",true),"Bouton d’échange introuvable")
+   local traded=0
+   while active() and inRange() and tabs.IsActive(tabName) do
+    local before,price=balance(),rush.Flags.SparkTradePrice:Get()
+    if type(before)~="number" or price<=0 or before<price or before==rush.UnconfirmedSparks then break end
+    assert(waitFor(function()
+     return inRange() and tabs.IsActive(tabName) and button:GetAttribute("Disabled")~=true
+    end,5,active),"Bouton d’échange indisponible")
+    setStatus("Sparks · échange chez Rumble")
+    rush.UnconfirmedSparks=before
+    activate(button.Activated)
+    assert(waitFor(function()
+     local remaining=balance()
+     return type(remaining)=="number" and remaining<=before-price
+    end,10,active),"Débit des Sparks non confirmé")
+    rush.UnconfirmedSparks=nil
+    traded+=1
+    task.wait(.45)
+   end
+   setStatus(("Rumble · %d échange(s) confirmé(s)"):format(traded))
+  end)
+  if opened and tabs and tabs.IsActive(tabName) then pcall(tabs.Deactivate,{instant=true}) end
+  rush.MoveValid=nil
+  rush.TradeRetryAt=os.clock()+(ok and 5 or 60)
+  if generation==token then
+   stopMovement(true)
+   autoActivity="IDLE"
+   if not ok and automaticMode then setStatus(tostring(reason):match("^[^\n]+") or "Échange Sparks interrompu") end
   end
  end
 
@@ -4861,7 +4983,7 @@ local function idleOnTreadmill(token)
 	if destroyed or not autoEnabled or generation ~= token then return true end
 	setStatus("TREADMILL : entrainement, attente d'un oeuf...")
 	while autoEnabled and generation == token and automaticMode and not queuePaused
-		and not FusionModules.Helpers.FishingMode()and FusionModules.Options.AutoTreadmill and next(queuedEggs) == nil and not activityRecheckPending and not FusionModules.Butterflies.Available() and not FusionModules.Skyfall.Available() and not FusionModules.SlickRick.Available() and not FusionModules.StormRush.Available() and not FusionModules.Helpers.VoidPearlTradeAvailable() and not FusionModules.StormyEgg.Available() and not destroyed do
+		and not FusionModules.Helpers.FishingMode()and FusionModules.Options.AutoTreadmill and next(queuedEggs) == nil and not activityRecheckPending and not FusionModules.Butterflies.Available() and not FusionModules.Skyfall.Available() and not FusionModules.SlickRick.Available() and not FusionModules.StormRush.Available() and not FusionModules.Helpers.VoidPearlTradeAvailable() and not FusionModules.StormRush.CanTrade() and not FusionModules.StormyEgg.Available() and not destroyed do
 		serviceWallMaintenance(token)
   if FusionModules.AdminRuntime and FusionModules.AdminRuntime.ProgressTravelling and FusionModules.AdminRuntime.ProgressTravelling()then task.wait(CONFIG.ScanInterval);continue end
 		if not treadmillAssigned and autoActivity ~= "TREADMILL" then return true end
@@ -5091,6 +5213,8 @@ local function worker(token)
 				FusionModules.Butterflies.Idle(token)
             elseif automaticMode and FusionModules.StormRush.Available() then
                 FusionModules.StormRush.Idle(token)
+            elseif automaticMode and FusionModules.StormRush.CanTrade() then
+                FusionModules.StormRush.TradeSparks(token)
             elseif automaticMode and FusionModules.StormyEgg.Available() then
                 FusionModules.StormyEgg.Idle(token)
 			elseif automaticMode then
