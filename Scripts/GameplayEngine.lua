@@ -2543,6 +2543,7 @@ local function moveActivity(destination, token, interruptForEgg, nextDestination
   if autoActivity=="TO_BUTTERFLIES" and FusionModules.Butterflies.MoveValid and not FusionModules.Butterflies.MoveValid() then
    stopMovement(true);return false,"papillons interrompus"
   end
+  if autoActivity=="BUTTERFLY_TRADE" and FusionModules.ButterflyTrade.MoveValid and not FusionModules.ButterflyTrade.MoveValid() then stopMovement(true);return false,"Échange de papillons interrompu" end
   if autoActivity=="STORMY_EGG" and FusionModules.StormyEgg.MoveValid and not FusionModules.StormyEgg.MoveValid() then stopMovement(true);return false,"Stormy Egg interrompu" end
   if autoActivity=="TO_FISHING"and FusionModules.FishingMoveValid and not FusionModules.FishingMoveValid()then stopMovement(true);return false,"pêche interrompue"end
   if autoActivity=="TO_FARM"and FusionModules.CollectionReturnPending then stopMovement(true);return false,"COLLECTION_STOPPED"end
@@ -4537,7 +4538,7 @@ do
  end
 
  function rush.CanTrade()
-  if not treadmillAssigned or not rush.Flags or os.clock()<(rush.TradeRetryAt or 0)
+  if not rush.Flags or os.clock()<(rush.TradeRetryAt or 0)
    or not FusionModules.Helpers.TreadmillOnly() or rush.Available() or rush.Util.State()~="Idle" then return false end
   local data=profile()[rush.Util.ProfileKey]
   local balance=data and data[rush.Util.SparksField]
@@ -4560,8 +4561,6 @@ do
   local tabName="StormheartTradeIn"
   local opened=false
   local ok,reason=FusionModules.Protect("RUMBLE_TRADE",function()
-   local left,why=leaveTreadmill(token)
-   assert(left,why)
    if not active() or not enterCave(token,character,active) then return end
    local prompt
    if not waitFor(function()
@@ -4760,7 +4759,7 @@ function FusionModules.StormyEgg.Run(token)
  local shop=FusionModules.StormyEgg
  local character,_,root=getCharacterParts()
  if not root then return end
- local prompt=shop.Available()
+ local prompt=shop.Available(true)
  if not prompt then return end
  local function active()
   return activityValid(token,character) and automaticMode and not stopAfterFlight
@@ -4768,8 +4767,6 @@ function FusionModules.StormyEgg.Run(token)
    and FusionModules.Helpers.TreadmillOnly() and not FusionModules.StormRush.Available()
  end
  if not active() then return end
- local exited,reason=leaveTreadmill(token)
- if not exited then error(tostring(reason),0) end
  if not active() or shop.Available(true)~=prompt then return end
  local pedestal=prompt.Parent
  if not pedestal or not pedestal:IsA("BasePart") then return end
@@ -4870,10 +4867,10 @@ function FusionModules.StormyEgg.Idle(token)
 end
 
 
-function FusionModules.Helpers.VoidPearlTradeAvailable()
+function FusionModules.Helpers.VoidPearlTradeAvailable(inProgress)
  local runtime=FusionModules.AdminRuntime
  if FusionModules.Reporting.ClientKind~="admin" or not runtime or not runtime.Initialized
-  or not treadmillAssigned or os.clock()<(FusionModules.VoidPearlRetryAt or 0)
+  or (not inProgress and not treadmillAssigned) or os.clock()<(FusionModules.VoidPearlRetryAt or 0)
   or not FusionModules.Helpers.TreadmillOnly() or FusionModules.StormRush.Available() then return false end
  local profile=Save.Peek()
  local pearls=profile and profile.AlienLagoon and profile.AlienLagoon.VoidPearls
@@ -4894,14 +4891,249 @@ function FusionModules.Helpers.VoidPearlTrade(token)
   return activityValid(token,character) and automaticMode and FusionModules.Helpers.TreadmillOnly() and not FusionModules.StormRush.Available()
  end
  local ok,reason=FusionModules.Protect("VOID_PEARLS",function()
-  if not FusionModules.Helpers.VoidPearlTradeAvailable() or not active() then return end
-  local left,why=leaveTreadmill(token)
-  assert(left,why)
+  if not FusionModules.Helpers.VoidPearlTradeAvailable(true) or not active() then return end
   runtime.PrepareFishingTravel({TradePearls=true,Active=active,Move=FusionModules.Helpers.MoveForFishing,Status=setStatus})
  end)
  FusionModules.VoidPearlRetryAt=os.clock()+(ok and 3 or 60)
  if not ok and active() then setStatus("Void Pearls : "..tostring(reason)) end
  autoActivity="IDLE"
+end
+
+FusionModules.ButterflyTrade={RetryAt=0,Uncertain={}}
+
+do
+ local trade=FusionModules.ButterflyTrade
+ local function findPath(...)
+  local node=Workspace
+  for _,name in ipairs({...}) do
+   node=node:FindFirstChild(name)
+   if not node then return nil end
+  end
+  return node
+ end
+ local function markers()
+  return findPath("World","Build","EnchantedTreeInterior","Markers")
+ end
+ local function entrance()
+  local map=markers()
+  local trigger=map and map:FindFirstChild("EnterTrigger")
+  local tree=findPath("World","Build","EnchantedForestZone","Zone13Props","EnchantedTree")
+  local anchor=trigger and trigger:FindFirstChild("EnchantedTreeEntrance")
+  local prompt=(trigger and trigger:FindFirstChild("EnchantedTreePrompt",true))
+   or (tree and tree:FindFirstChild("EnchantedTreePrompt",true))
+  local point=anchor and anchor:IsA("Attachment") and anchor.WorldPosition
+  if not point and game.PlaceId==80978566387592 then point=Vector3.new(7408.9,71,-311) end
+  return prompt,point
+ end
+ local function machine()
+  return findPath("World","Machines","ButterflyStation","ButterflyMachine","Anchor","ProximityPrompt")
+ end
+ local function counts()
+  local profile=Save.Peek()
+  return profile and profile.Butterflies and profile.Butterflies.Counts or {}
+ end
+ local function recipe()
+  local balance=counts()
+  for _,tier in ipairs({"Purple","Blue","Green"}) do
+   local cost=trade.Catalog.TradeUpCost(tier)
+   local amount=balance[tier] or 0
+   if cost and cost>0 and amount>=cost and trade.Uncertain[tier]~=amount then return tier,amount end
+  end
+ end
+ function trade.Inside()
+  return player:GetAttribute("InEnchantedTree")==true
+ end
+ function trade.Available()
+  if FusionModules.Reporting.ClientKind~="admin" or not Save
+   or os.clock()<trade.RetryAt or not FusionModules.Helpers.TreadmillOnly() or FusionModules.StormRush.Available() then return false end
+  if not trade.Catalog then
+   local ok,catalog,flags=pcall(function()
+    return require(ReplicatedStorage.Shared.Modules.ButterflyCatalog),require(ReplicatedStorage.Shared.Flags.ButterflyFlags)
+   end)
+   if not ok then trade.RetryAt=os.clock()+30;return false end
+   trade.Catalog,trade.Flags=catalog,flags
+  end
+  if not trade.Flags.Enabled:Get() then return false end
+  if not trade.Inside() then
+   local prompt,point=entrance()
+   if not prompt and not point then return false end
+  end
+  return recipe()~=nil
+ end
+ local function waitFor(test,seconds,valid)
+  local deadline=os.clock()+seconds
+  repeat
+   if test() then return true end
+   if not valid() then return false end
+   task.wait(.1)
+  until os.clock()>=deadline
+  return false
+ end
+ local function promptPosition(prompt)
+  local parent=prompt and prompt.Parent
+  if parent and parent:IsA("Attachment") then return parent.WorldPosition end
+  if parent and parent:IsA("BasePart") then return parent.Position end
+ end
+ local function reachPoint(position,token,active)
+  local _,_,root=getCharacterParts()
+  if not root or not position or not active() then return false,"position du prompt indisponible" end
+  if distanceXZ(root.Position,position)>6 then
+   local reached,reason=FusionModules.Helpers.PathMove(position,token,true)
+   if not reached and distanceXZ(root.Position,position)>6 then return false,reason end
+  end
+  if not active() then return false,"trajet interrompu" end
+  local reached,reason=moveActivity(position,token,true,nil,nil,1.25)
+  if not reached then return false,reason end
+  stopMovement(true)
+  RunService.Heartbeat:Wait()
+  if not active() or distanceXZ(root.Position,position)>1.5 then return false,"arrêt devant le prompt non confirmé" end
+  return true
+ end
+ local function activate(prompt,token,active)
+  local position=promptPosition(prompt)
+  local reached,reason=reachPoint(position,token,active)
+  if not reached then return false,reason end
+  local _,_,root=getCharacterParts()
+  if not root or not prompt.Enabled or not prompt:IsDescendantOf(Workspace)
+   or (root.Position-position).Magnitude>prompt.MaxActivationDistance then return false,"prompt hors de portée ou désactivé" end
+  return executorTools.ActivateNativePrompt(prompt)
+ end
+ function trade.Exit(token)
+  local map=markers()
+  local exit=map and map:FindFirstChild("ExitTrigger")
+  local character,humanoid,root=getCharacterParts()
+  if not exit or not humanoid or not root then return false end
+  autoActivity="BUTTERFLY_TRADE"
+  moveActivity(exit.Position,token,false)
+  if not activityValid(token,character) then return false end
+  humanoid:MoveTo(exit.Position)
+  return waitFor(function()return not trade.Inside()end,8,function()return activityValid(token,character)end)
+ end
+ function trade.Run(token)
+  local character=getCharacterParts()
+  if not character or not trade.Available() then return end
+  local function active()
+   return activityValid(token,character) and automaticMode
+    and FusionModules.Helpers.TreadmillOnly() and not FusionModules.StormRush.Available()
+  end
+  if not active() then return end
+  autoActivity="BUTTERFLY_TRADE"
+  trade.MoveValid=active
+  trade.Managed=true
+  if not trade.Inside() then
+   local prompt,point=entrance()
+   point=promptPosition(prompt) or point
+   setStatus("Papillons · trajet vers l’Arbre enchanté")
+   if not point then error("Coordonnées de l’entrée de l’Arbre enchanté indisponibles",0) end
+   local departed,departureReason=FusionModules.Helpers.DepartSafe(token,active,isSafe(point)==false)
+   if not departed then
+    if active() then error("Arbre enchanté : "..tostring(departureReason),0) end
+    return
+   end
+   local reached,reason=reachPoint(point,token,active)
+   if not reached then
+    if active() then error("Arbre enchanté : "..tostring(reason),0) end
+    return
+   end
+   if not waitFor(function()
+    prompt=entrance()
+    return prompt and prompt:IsA("ProximityPrompt") and prompt.Enabled
+   end,6,active) then
+    if active() then error("Prompt Entrer indisponible au point d’approche",0) end
+    return
+   end
+   local fired,detail=activate(prompt,token,active)
+   if not fired then
+    if active() then error("Arbre enchanté : "..tostring(detail),0) end
+    return
+   end
+   if not waitFor(trade.Inside,10,function()return activityValid(token,character)end) then
+    if active() then error("Entrée dans l’Arbre enchanté non confirmée",0) end
+    return
+   end
+  end
+  local prompt
+  if not waitFor(function()prompt=machine();return prompt~=nil end,5,active) then return end
+  local tabs=require(ReplicatedStorage.Client.Tabs)
+  setStatus("Papillons · trajet vers la machine d’échange")
+  local opened,reason=activate(prompt,token,active)
+  if not opened then
+   if active() then error("Machine à papillons : "..tostring(reason),0) end
+   return
+  end
+  trade.Tabs=tabs
+  if not waitFor(function()return tabs.IsActive("ButterflyMachine")end,4,active) then return end
+  local screen=require(ReplicatedStorage.Client.GUI).Get("ButterflyMachine")
+  local activateButton=assert(executorFunction("firesignal"),"Activation du bouton indisponible")
+  local tradeButton=assert(screen and screen:FindFirstChild("TradeButton",true),"Bouton d’échange introuvable")
+  local recipes={Green="Recipe1",Blue="Recipe2",Purple="Recipe3"}
+  while active() and trade.Inside() and tabs.IsActive("ButterflyMachine") do
+   local tier,before=recipe()
+   if not tier then return end
+   local _,_,root=getCharacterParts()
+   if not root or (root.Position-promptPosition(prompt)).Magnitude>prompt.MaxActivationDistance then return end
+   setStatus("Papillons · échange en cours")
+   local selection=assert(screen:FindFirstChild(recipes[tier],true),"Recette d’échange introuvable")
+   local cost=trade.Catalog.TradeUpCost(tier)
+   activateButton(selection.Activated)
+   RunService.Heartbeat:Wait()
+   if not active() or not tabs.IsActive("ButterflyMachine") or (root.Position-promptPosition(prompt)).Magnitude>prompt.MaxActivationDistance then return end
+   trade.Uncertain[tier]=before
+   activateButton(tradeButton.Activated)
+   if not waitFor(function()return (counts()[tier] or 0)<=before-cost end,8,function()return activityValid(token,character)end) then
+    error("Échange de papillons : débit non confirmé",0)
+   end
+   trade.Uncertain[tier]=nil
+   task.wait(.45)
+  end
+ end
+ function trade.Idle(token)
+  FusionModules.Protect("BUTTERFLY_TRADE",trade.Run,token)
+  if trade.Tabs and trade.Tabs.IsActive("ButterflyMachine") then pcall(trade.Tabs.Deactivate,{instant=true}) end
+  trade.Tabs=nil
+  trade.MoveValid=nil
+  trade.RetryAt=os.clock()+15
+  if generation==token then stopMovement(true);autoActivity="IDLE" end
+ end
+end
+
+
+function FusionModules.Helpers.ExchangeRouteAvailable()
+ if not treadmillAssigned or not FusionModules.Helpers.TreadmillOnly() or FusionModules.StormRush.Available() then return false end
+ return FusionModules.StormyEgg.Available() or FusionModules.StormRush.CanTrade()
+  or FusionModules.ButterflyTrade.Available() or FusionModules.Helpers.VoidPearlTradeAvailable()
+end
+
+function FusionModules.Helpers.ExchangeRoute(token)
+ if not FusionModules.Helpers.ExchangeRouteAvailable() then return end
+ local character=player.Character
+ local rush,tree=FusionModules.StormRush,FusionModules.ButterflyTrade
+ local function active()
+  return activityValid(token,character) and automaticMode and FusionModules.Helpers.TreadmillOnly() and not rush.Available()
+ end
+ local left,reason=leaveTreadmill(token)
+ if not left then setStatus("Échanges · sortie du tapis : "..tostring(reason));return end
+ if not active() then return end
+ if FusionModules.StormyEgg.Available(true) then FusionModules.StormyEgg.Idle(token) end
+ if not active() then return end
+ if rush.CanTrade() then
+  rush.TradeSparks(token)
+  if rush.Managed and rush.Inside() then
+   local exited=FusionModules.Protect("RUMBLE_EXIT",function() return rush.Exit(token) end)
+   if not exited or rush.Inside() then return end
+   rush.Managed=false
+  end
+ end
+ if not active() then return end
+ if tree.Available() then
+  tree.Idle(token)
+  if tree.Managed and tree.Inside() then
+   local exited=FusionModules.Protect("BUTTERFLY_TRADE_EXIT",function() return tree.Exit(token) end)
+   if not exited or tree.Inside() then return end
+   tree.Managed=false
+  end
+ end
+ if active() and FusionModules.Helpers.VoidPearlTradeAvailable(true) then FusionModules.Helpers.VoidPearlTrade(token) end
 end
 
 function FusionModules.Helpers.FishingIdle(token)
@@ -4983,7 +5215,7 @@ local function idleOnTreadmill(token)
 	if destroyed or not autoEnabled or generation ~= token then return true end
 	setStatus("TREADMILL : entrainement, attente d'un oeuf...")
 	while autoEnabled and generation == token and automaticMode and not queuePaused
-		and not FusionModules.Helpers.FishingMode()and FusionModules.Options.AutoTreadmill and next(queuedEggs) == nil and not activityRecheckPending and not FusionModules.Butterflies.Available() and not FusionModules.Skyfall.Available() and not FusionModules.SlickRick.Available() and not FusionModules.StormRush.Available() and not FusionModules.Helpers.VoidPearlTradeAvailable() and not FusionModules.StormRush.CanTrade() and not FusionModules.StormyEgg.Available() and not destroyed do
+		and not FusionModules.Helpers.FishingMode()and FusionModules.Options.AutoTreadmill and next(queuedEggs) == nil and not activityRecheckPending and not FusionModules.Butterflies.Available() and not FusionModules.Skyfall.Available() and not FusionModules.SlickRick.Available() and not FusionModules.StormRush.Available() and not FusionModules.Helpers.ExchangeRouteAvailable() and not destroyed do
 		serviceWallMaintenance(token)
   if FusionModules.AdminRuntime and FusionModules.AdminRuntime.ProgressTravelling and FusionModules.AdminRuntime.ProgressTravelling()then task.wait(CONFIG.ScanInterval);continue end
 		if not treadmillAssigned and autoActivity ~= "TREADMILL" then return true end
@@ -5069,6 +5301,11 @@ local function worker(token)
     task.wait(.5)
     continue
    end
+  end
+  if FusionModules.ButterflyTrade.Managed and FusionModules.ButterflyTrade.Inside() then
+   FusionModules.Protect("BUTTERFLY_TRADE_EXIT",FusionModules.ButterflyTrade.Exit,token)
+   if FusionModules.ButterflyTrade.Inside() then task.wait(2);continue end
+   FusionModules.ButterflyTrade.Managed=false
   end
   if FusionModules.Helpers.ReturnAfterCollectionStop(token)then task.wait();continue end
 		if FusionModules.Arrival.Waiting()then
@@ -5204,8 +5441,6 @@ local function worker(token)
                 FusionModules.StormRush.Idle(token)
             elseif automaticMode and FusionModules.Skyfall.Available() then
                 FusionModules.Skyfall.Idle(token)
-            elseif automaticMode and FusionModules.Helpers.VoidPearlTradeAvailable() then
-                FusionModules.Helpers.VoidPearlTrade(token)
             elseif automaticMode and FusionModules.Helpers.FishingMode() then
                 local ok,reason=FusionModules.Helpers.FishingIdle(token)
                 if not ok then stopAutomation("Cosmic Eclipse : "..tostring(reason));return end
@@ -5213,10 +5448,8 @@ local function worker(token)
 				FusionModules.Butterflies.Idle(token)
             elseif automaticMode and FusionModules.StormRush.Available() then
                 FusionModules.StormRush.Idle(token)
-            elseif automaticMode and FusionModules.StormRush.CanTrade() then
-                FusionModules.StormRush.TradeSparks(token)
-            elseif automaticMode and FusionModules.StormyEgg.Available() then
-                FusionModules.StormyEgg.Idle(token)
+            elseif automaticMode and FusionModules.Helpers.ExchangeRouteAvailable() then
+                FusionModules.Helpers.ExchangeRoute(token)
 			elseif automaticMode then
 				serverSearchState = "OFF"
 				local ok, reason = idleOnTreadmill(token)
