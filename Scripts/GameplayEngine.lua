@@ -4833,7 +4833,8 @@ function FusionModules.StormyEgg.Run(token)
   repeat
    if not active() or not inRange() or not tabs.IsActive(tabName) or not shop.Util.GachaOpen() then return end
    local screen=gui.Get(tabName)
-   local content=screen and screen:FindFirstChild("Content")
+   local main=screen and screen:FindFirstChild("Main")
+   local content=main and main:FindFirstChild("Content")
    local buttons=content and content:FindFirstChild("Btns")
    local candidate=buttons and buttons:FindFirstChild("Buy")
    if candidate and candidate:IsA("GuiButton") and candidate:GetAttribute("Disabled")~=true then
