@@ -5373,6 +5373,7 @@ function FusionModules.RemoteHop.Validate(target, forced, manualSteal)
  if FusionModules.Reporting.ClientKind~="admin" then return false end
  if destroyed or not ready or not report or not report.Ready or not report.TeleportAllowed or not report.SettingsAllowed or (not forced and not report.AutomationActive()) then return false end
  if type(target)~="table" or target.placeId~=tostring(game.PlaceId) or type(target.jobId)~="string" or target.jobId=="" or #target.jobId>128 or (target.jobId==game.JobId and not manualSteal and not FusionModules.Helpers.FishingActive()) then return false end
+ if FusionModules.Options.GroupMode and target.jobId~=game.JobId and (manualSteal or not forced) then return false end
  if manualSteal then return forced and type(target.uid)=="string" and #target.uid>0 and #target.uid<=128 end
  if forced then return true end
  local rate=target.incomePerSecond
