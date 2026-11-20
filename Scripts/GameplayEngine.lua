@@ -5116,22 +5116,41 @@ do
 end
 
 
+local function nextExchangeStop(inProgress)
+ if FusionModules.StormyEgg.Available(inProgress) then return "Stormy Eggs" end
+ if FusionModules.StormRush.CanTrade() then return "Sparks chez Rumble" end
+ if FusionModules.ButterflyTrade.Available() then return "papillons dans l’Arbre enchanté" end
+ if FusionModules.Helpers.VoidPearlTradeAvailable(inProgress) then return "Void Pearls" end
+end
+
 function FusionModules.Helpers.ExchangeRouteAvailable()
- if not treadmillAssigned or not FusionModules.Helpers.TreadmillOnly() or FusionModules.StormRush.Available() then return false end
- return FusionModules.StormyEgg.Available() or FusionModules.StormRush.CanTrade()
-  or FusionModules.ButterflyTrade.Available() or FusionModules.Helpers.VoidPearlTradeAvailable()
+ if not treadmillAssigned or os.clock()<(FusionModules.ExchangeRouteRetryAt or 0)
+  or not FusionModules.Helpers.TreadmillOnly() or FusionModules.StormRush.Available() then return false end
+ return nextExchangeStop(false)
 end
 
 function FusionModules.Helpers.ExchangeRoute(token)
- if not FusionModules.Helpers.ExchangeRouteAvailable() then return end
+ local first=FusionModules.Helpers.ExchangeRouteAvailable()
+ if not first then return end
  local character=player.Character
  local rush,tree=FusionModules.StormRush,FusionModules.ButterflyTrade
  local function active()
   return activityValid(token,character) and automaticMode and FusionModules.Helpers.TreadmillOnly() and not rush.Available()
  end
- local left,reason=leaveTreadmill(token,"trajet des échanges")
- if not left then setStatus("Échanges · sortie du tapis : "..tostring(reason));return end
+ local function retryLater(reason)
+  FusionModules.ExchangeRouteRetryAt=os.clock()+60
+  local message="Échanges · "..first.." · "..tostring(reason).." · nouvelle tentative dans 60 s"
+  FusionModules.InventoryNotice=message
+  setStatus(message)
+ end
  if not active() then return end
+ local left,reason=leaveTreadmill(token,"échange : "..first)
+ if not left then
+  if activityValid(token,character) then retryLater(reason or "sortie du tapis non confirmée") end
+  return
+ end
+ if not active() then return end
+ if not nextExchangeStop(true) then retryLater("aucune étape encore disponible");return end
  if FusionModules.StormyEgg.Available(true) then FusionModules.StormyEgg.Idle(token) end
  if not active() then return end
  if rush.CanTrade() then
