@@ -341,14 +341,15 @@ task.spawn(function()
   if O.Connecting and now-O.LastAck>20 then O.Disconnect()end
   if O.PendingAt and now-O.PendingAt>25 then O.PendingAt=nil;O.Disconnect()end
   if O.Ready and game.JobId~=""then
-   local refreshCapacity=O.ClientKind=="admin" and now>=(O.NextCapacityReport or 0)
+   local reportsCapacity=O.ClientKind=="admin" or O.ClientKind=="observer"
+   local refreshCapacity=reportsCapacity and now>=(O.NextCapacityReport or 0)
    if (O.PlayerDirty or refreshCapacity) and now-(O.LastPlayers or 0)>=1 then
     local rows=O.Players();local fingerprint=Http:JSONEncode(rows)
     if O.ForcePlayers or refreshCapacity or fingerprint~=O.PlayerFingerprint then
      O.PlayerRevision=O.PlayerRevision+1
      local message=O.Header("players.snapshot","PlayerReporter",O.PlayerRevision)
      message.reporterUserId=tostring(player.UserId)
-     if O.ClientKind=="admin" then message.maxPlayers=Players.MaxPlayers end
+     if reportsCapacity then message.maxPlayers=Players.MaxPlayers end
      if O.Send(message,"players",rows)then O.NextCapacityReport=now+15;O.PlayerFingerprint=fingerprint;O.ForcePlayers=false;O.PendingAt=O.PendingAt or now end
     end
     O.PlayerDirty=false;O.LastPlayers=now
