@@ -4745,6 +4745,12 @@ function FusionModules.StormyEgg.Available(inProgress)
  local data=profile and profile[shop.Util.ProfileKey]
  local balance=data and data[shop.Util.CurrencyField]
  local price=shop.Flags.GachaPrice:Get()
+ local count=0
+ for _ in pairs(profile and profile.EggInventory or {}) do count+=1 end
+ local maxEggs=require(ReplicatedStorage.Shared.Types.Eggs).MAX_INVENTORY
+ if type(maxEggs)=="number" and count>=maxEggs then return nil end
+ local refused=shop.Refused
+ if refused and refused.balance==balance and refused.price==price and refused.count==count then return nil end
  if type(balance)~="number" or type(price)~="number" or price<=0 or balance<price
   or balance==shop.UncertainBalance then return nil end
  local node=Workspace
@@ -4752,7 +4758,7 @@ function FusionModules.StormyEgg.Available(inProgress)
   node=node:FindFirstChild(name)
   if not node then return nil end
  end
- if node:IsA("ProximityPrompt") then return node,balance,price end
+ if node:IsA("ProximityPrompt") then return node,balance,price,count end
 end
 
 function FusionModules.StormyEgg.Run(token)
@@ -4831,6 +4837,9 @@ function FusionModules.StormyEgg.Run(token)
   local accepted,reason=purchase:InvokeServer()
   if accepted==false then
    shop.UncertainBalance=nil
+   local count=0
+   for _ in pairs(profile and profile.EggInventory or {}) do count+=1 end
+   shop.Refused={balance=balance,price=price,count=count}
    error("Stormy Egg · achat refusé : "..tostring(reason or "raison indisponible"),0)
   end
   if accepted~=true then error("Stormy Egg · réponse d’achat inattendue",0) end
@@ -5180,7 +5189,7 @@ local function idleOnTreadmill(token)
   autoActivity="IDLE";setStatus("En attente : AutoTreadmill OFF");task.wait(CONFIG.ScanInterval);return true
  end
  local _,_,returnRoot=getCharacterParts()
- if returnRoot and isSafe(returnRoot.Position)==false then
+ if not treadmillAssigned and returnRoot and isSafe(returnRoot.Position)==false then
   local home,why=getStartAreaDestination()
   if not home then return false,why end
   autoActivity="RETURN_SAFE"
@@ -5200,8 +5209,7 @@ local function idleOnTreadmill(token)
 		local _, humanoid = getCharacterParts()
 		if not humanoid then return false,"personnage absent" end
 		local destination = bottom.Position + Vector3.new(0, humanoid.HipHeight + 2, 0)
-		local ok, reason = FusionModules.Helpers.DepartSafe(token,function()return automaticMode and FusionModules.Options.AutoTreadmill end,false)
-		if ok then ok,reason=measureAction("ENTREE_TAPIS",moveActivity,destination,token,true) end
+		local ok, reason = measureAction("ENTREE_TAPIS",moveActivity,destination,token,true)
 		if not ok then
 			if reason == "nouvel oeuf"or reason=="papillons"or reason=="tapis OFF"or reason=="skyfall"or reason=="eclipse"or reason=="slick rick"or reason=="storm rush"then return true end
 			return false, reason
@@ -5226,7 +5234,7 @@ local function idleOnTreadmill(token)
 		and not FusionModules.Helpers.FishingMode()and FusionModules.Options.AutoTreadmill and next(queuedEggs) == nil and not activityRecheckPending and not FusionModules.Butterflies.Available() and not FusionModules.Skyfall.Available() and not FusionModules.SlickRick.Available() and not FusionModules.StormRush.Available() and not FusionModules.Helpers.ExchangeRouteAvailable() and not destroyed do
 		serviceWallMaintenance(token)
   if FusionModules.AdminRuntime and FusionModules.AdminRuntime.ProgressTravelling and FusionModules.AdminRuntime.ProgressTravelling()then task.wait(CONFIG.ScanInterval);continue end
-		if not treadmillAssigned and autoActivity ~= "TREADMILL" then return true end
+		if not treadmillAssigned or autoActivity ~= "TREADMILL" then return true end
 		syncQueue()
 		task.wait(CONFIG.ScanInterval)
 	end
