@@ -4803,13 +4803,14 @@ function FusionModules.StormyEgg.Run(token)
  local tabs=require(ReplicatedStorage.Client.Tabs)
  local tabName="StormheartCloudEgg"
  if not tabs.IsActive(tabName) then
+  local gachaShop=require(ReplicatedStorage.Controllers.Game.StormheartCaveController.GachaShop)
   shop.OpenedTabs=tabs
   local nextAttempt=0
   while active() and inRange() and not tabs.IsActive(tabName) do
    local now=os.clock()
    if prompt.Enabled and now>=nextAttempt then
     setStatus("Stormy Egg · ouverture de la boutique")
-    executorTools.ActivateNativePrompt(prompt)
+    gachaShop.Open()
     nextAttempt=os.clock()+1
    end
    task.wait(.1)
