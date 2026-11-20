@@ -4818,14 +4818,34 @@ function FusionModules.StormyEgg.Run(token)
   if not active() then return end
   if not tabs.IsActive(tabName) then error("Stormy Egg · sorti de la portée du prompt",0) end
  end
- local screen=require(ReplicatedStorage.Client.GUI).Get(tabName)
- local button=assert(screen and screen.Content.Btns.Buy,"Bouton d’achat introuvable")
+ local gui=require(ReplicatedStorage.Client.GUI)
  local activate=assert(executorFunction("firesignal"),"Activation du bouton indisponible")
- while active() and inRange() and tabs.IsActive(tabName) do
-  local available,balance,price=shop.Available(true)
-  if available~=prompt then return end
+ local function funds()
+  local profile=Save.Peek()
+  local data=profile and profile[shop.Util.ProfileKey]
+  return data and data[shop.Util.CurrencyField],shop.Flags.GachaPrice:Get()
+ end
+ while active() and inRange() and shop.Util.GachaOpen() and tabs.IsActive(tabName) do
+  local balance,price=funds()
+  if type(balance)~="number" or price<=0 or balance<price or balance==shop.UncertainBalance then return end
+  local button
+  local readyUntil=os.clock()+8
+  repeat
+   if not active() or not inRange() or not tabs.IsActive(tabName) or not shop.Util.GachaOpen() then return end
+   local screen=gui.Get(tabName)
+   local content=screen and screen:FindFirstChild("Content")
+   local buttons=content and content:FindFirstChild("Btns")
+   local candidate=buttons and buttons:FindFirstChild("Buy")
+   if candidate and candidate:IsA("GuiButton") and candidate:GetAttribute("Disabled")~=true then
+    button=candidate
+    break
+   end
+   task.wait(.1)
+  until os.clock()>=readyUntil
+  if not button then error("Stormy Egg · bouton d’achat resté indisponible après ouverture",0) end
+  balance,price=funds()
+  if type(balance)~="number" or price<=0 or balance<price or balance==shop.UncertainBalance then return end
   setStatus("Stormy Egg · achat ("..tostring(price).." Thunderstones)")
-  if button:GetAttribute("Disabled")==true then error("Bouton d’achat indisponible",0) end
   shop.Purchasing=true
   shop.UncertainBalance=balance
   activate(button.Activated)
