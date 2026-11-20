@@ -2832,10 +2832,11 @@ local function treadmillRequest(remote, token)
 end
 
 
-local function leaveTreadmill(token)
+local function leaveTreadmill(token, activity)
 	if not treadmillAssigned and autoActivity ~= "TREADMILL" and autoActivity ~= "TO_TREADMILL" then return true end
+	local reason=activity or autoActivity
 	autoActivity = "LEAVING_TREADMILL"
-	setStatus("Sortie du tapis puis trajet vers StartArea...")
+	setStatus("Sortie du tapis · "..tostring(reason).." · trajet vers StartArea…")
 	local _, humanoid = getCharacterParts()
 	if treadmillAssigned then
 		local ok, reason = treadmillRequest(TreadmillRemotes.AskDoff, token)
@@ -2860,7 +2861,7 @@ function FusionModules.Helpers.MoveForUpgrade(kind,canContinue)
  local model=folder and folder:FindFirstChild(kind=="plot"and"PlotUpgrade"or"TreadmillUpgrade")
  local sign=model and model:FindFirstChild("Sign")
  if not sign or not sign:IsA("BasePart")then return false,"Panneau upgrade du plot introuvable"end
- local exited,reason=leaveTreadmill(token);if not exited or not canContinue()then return false,reason or"Priorite au vol"end
+ local exited,reason=leaveTreadmill(token,"amélioration du plot ou du tapis");if not exited or not canContinue()then return false,reason or"Priorite au vol"end
  if shared.__AutoSAEMovementLock then return false,"Deplacement deja en cours"end
  local lock={Owner="AdminUpgrade",Character=character,Generation=token};shared.__AutoSAEMovementLock=lock
  FusionModules.UpgradeMoveValid=canContinue;autoActivity="TO_UPGRADE"
@@ -3160,7 +3161,7 @@ local function placeInventoryEggsImpl(selection, token, opened)
 		end
 		if not free or free<=0 then summary="Enclos plein : limite des oeufs places atteinte"; return end
 		if token~=nil then
-			local exited, reason=leaveTreadmill(token)
+			local exited, reason=leaveTreadmill(token,"placement d’un œuf")
 			if not exited then summary="Sortie tapis : "..tostring(reason); return end
 			autoActivity="TO_PLOT"
 			local target=plot.PetArea.Position+Vector3.new(0,humanoid.HipHeight+2,0)
@@ -3978,7 +3979,7 @@ function FusionModules.Skyfall.Run(token)
   if not runtime.LeaveFishingLagoon() then return end
  end
  if not active() then return end
- local left,detail=leaveTreadmill(token)
+ local left,detail=leaveTreadmill(token,"Skyfall")
  if not left then error(tostring(detail),0) end
  if not active() then return end
  autoActivity="SKYFALL"
@@ -4409,7 +4410,7 @@ do
    local left,why=runtime.LeaveFishingLagoon()
    if not left then error(tostring(why or "Sortie du lagon non confirmée"),0) end
   end
-  local left,why=leaveTreadmill(token)
+  local left,why=leaveTreadmill(token,"Storm Rush")
   if not left then error(why,0) end
   if not active() or not rush.Available(joiningLive) then return end
   if not enterCave(token,character,active) then return end
@@ -5128,7 +5129,7 @@ function FusionModules.Helpers.ExchangeRoute(token)
  local function active()
   return activityValid(token,character) and automaticMode and FusionModules.Helpers.TreadmillOnly() and not rush.Available()
  end
- local left,reason=leaveTreadmill(token)
+ local left,reason=leaveTreadmill(token,"trajet des échanges")
  if not left then setStatus("Échanges · sortie du tapis : "..tostring(reason));return end
  if not active() then return end
  if FusionModules.StormyEgg.Available(true) then FusionModules.StormyEgg.Idle(token) end
@@ -5156,7 +5157,7 @@ end
 function FusionModules.Helpers.FishingIdle(token)
  local runtime=FusionModules.AdminRuntime
  if not runtime or not runtime.Initialized then task.wait(.5);return true end
- local exited,reason=leaveTreadmill(token)
+ local exited,reason=leaveTreadmill(token,"pêche")
  if not exited then return false,reason end
  stopMovement(true)
  if not FusionModules.Helpers.FishingMode()then return true end
@@ -5392,7 +5393,7 @@ local function worker(token)
 			searchWaitForEgg = false
 			serverSearchState = automaticMode and "Oeuf eligible : collecte" or "OFF"
             FusionModules.BatCombat.ApproachUid=not recovering and selected.Uid or nil
-			local exited, exitReason = measureAction("SORTIE_TAPIS", leaveTreadmill, token)
+			local exited, exitReason = measureAction("SORTIE_TAPIS", leaveTreadmill, token, "collecte d’un œuf")
 			if not exited then stopAutomation("Sortie tapis : " .. tostring(exitReason)); return end
 			if not autoEnabled or generation ~= token then return end
 			if not recovering and not directNext then
@@ -6316,7 +6317,9 @@ shared.__AutoSAEController = {Destroy = destroy, Gui = gui, Reporting = FusionMo
    elseif currentCycle or next(queuedEggs)then reason="Placement en attente : collecte des oeufs prioritaire"
    elseif placementRequest then reason="Placement en attente de confirmation serveur"end
    if FusionModules.AdminRuntime and FusionModules.AdminRuntime.ManualPending then reason="Action manuelle en attente : priorite au vol"end
-   return tostring(lastStatusText or autoActivity or"En attente").." · "..reason..(FusionModules.InventoryNotice and" · "..FusionModules.InventoryNotice or"")
+   local observer=FusionModules.Reporting.Observer
+   local clicks=observer and observer.LastClickStatus
+   return tostring(lastStatusText or autoActivity or"En attente").." · "..reason..(FusionModules.InventoryNotice and" · "..FusionModules.InventoryNotice or"")..(clicks and " · "..clicks or "")
   end,
   FishingSaleCandidates=function()
    if destroyed or not ready or not FusionModules.FishingBusy or not FusionModules.Options.AutoSell then return {} end
