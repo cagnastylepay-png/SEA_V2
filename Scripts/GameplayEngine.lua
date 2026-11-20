@@ -5069,13 +5069,12 @@ do
      return
     end
     setStatus(("Arbre enchanté · entrée, tentative %d/3"):format(attempt))
-    prompt:InputHoldBegin()
-    task.wait(math.max(.1,prompt.HoldDuration+.15))
-    prompt:InputHoldEnd()
+    local fired,fireReason=executorTools.FirePrompt(prompt)
+    if not fired then error("Prompt Entrer : "..tostring(fireReason),0) end
     if waitFor(trade.Inside,attempt==3 and 8 or 2,sameCharacter) then break end
    end
    if not trade.Inside() then
-    if active() then error("Le prompt natif n’a pas confirmé l’entrée dans l’Arbre enchanté",0) end
+    if active() then error("Le jeu n’a pas confirmé l’entrée dans l’Arbre enchanté",0) end
     return
    end
   end
@@ -5091,8 +5090,10 @@ do
    if active() then error("Machine à papillons : "..tostring(reason),0) end
    return
   end
-  require(ReplicatedStorage.Client.GUI).Get("ButterflyMachine")
-  if not tabs.IsActive("ButterflyMachine") then tabs.Activate("ButterflyMachine") end
+  if not tabs.IsActive("ButterflyMachine") then
+   local fired,fireReason=executorTools.FirePrompt(prompt)
+   if not fired then error("Prompt de la machine : "..tostring(fireReason),0) end
+  end
   trade.Tabs=tabs
   if not waitFor(function()return tabs.IsActive("ButterflyMachine")end,4,active) then
    if active() then error("Interface de la machine à papillons non ouverte",0) end
