@@ -22,17 +22,72 @@ return function(ctx)
   local ok,reason=ctx.Move(destination,viaStart,ctx.Active,pathfinding)
   assert(ok,label.." : "..tostring(reason or "raison indisponible"))
  end
- local function chooseLagoon()
+ local function findChoice(choice)
   local gui=player:FindFirstChildOfClass("PlayerGui")
   local choices=gui and gui:FindFirstChild("NpcChoices")
   if not choices then return end
   for _,label in ipairs(choices:GetDescendants())do
-   if label:IsA("TextLabel")and(label:GetAttribute("Text")==util.FerrymanLines.Choices.Go or label.Text==util.FerrymanLines.Choices.Go)then
+   if label:IsA("TextLabel")and(label:GetAttribute("Text")==choice or label.Text==choice)then
     local row=label
     while row and row.Parent~=choices:FindFirstChild("Choices")do row=row.Parent end
     return row and row:FindFirstChildWhichIsA("ImageButton",true)
    end
   end
+ end
+ local function visitFerryman(choice,label)
+  local npc=assert(util.Ferryman(),"Alien Ferryman introuvable")
+  local root=assert(npc.PrimaryPart,"Ferryman sans position")
+  ctx.Status(label.." : trajet vers Alien Ferryman")
+  travel(root.Position,true,false,"Trajet Ferryman interrompu")
+  assert(ctx.Active(),"Pêche interrompue")
+  local prompt=assert(npc:FindFirstChild(util.TalkPromptName,true),"Prompt Talk introuvable")
+  local env=type(getgenv)=="function"and getgenv()or getfenv()
+  assert(type(env.fireproximityprompt)=="function"and type(env.firesignal)=="function","Activation Talk ou dialogue indisponible")
+  ctx.Status(label.." : ouverture du dialogue")
+  env.fireproximityprompt(prompt)
+  local button=assert(waitFor(function()return findChoice(choice)end,25),"Choix du Ferryman non affiché : "..choice)
+  env.firesignal(button.Activated)
+  return env.firesignal
+ end
+ local function pearlBalance()
+  local profile=save.Peek()
+  return profile and profile.AlienLagoon and profile.AlienLagoon.VoidPearls
+ end
+ if ctx.TradePearls then
+  local cost=flags.TradePearlCost:Get()
+  local balance=pearlBalance()
+  if cost<=0 or type(balance)~="number" or balance<cost then return true end
+  local activate=visitFerryman(util.FerrymanLines.Choices.Trade,"Void Pearls")
+  local tradeIn=require(RS.Controllers.Game.AlienLagoonController.TradeIn)
+  local screen=assert(waitFor(function()
+   local gui=player:FindFirstChildOfClass("PlayerGui")
+   return tradeIn.IsOpen() and gui and gui:FindFirstChild(util.TradeInScreen)
+  end,15),"Écran d’échange Void Pearls indisponible")
+  local ok,result=pcall(function()
+   local button=assert(screen:FindFirstChild("TradeButton",true),"Bouton TRADE introuvable")
+   local traded=0
+   while ctx.Active() and tradeIn.IsOpen() do
+    cost,balance=flags.TradePearlCost:Get(),pearlBalance()
+    if cost<=0 or type(balance)~="number" or balance<cost then break end
+    assert(waitFor(function()
+     return tradeIn.IsOpen() and button:GetAttribute("Disabled")~=true
+    end,5),"Bouton TRADE indisponible")
+    ctx.Status("Void Pearls : échange contre une mutation Dark Matter")
+    activate(button.Activated)
+    assert(waitFor(function()
+     local remaining=pearlBalance()
+     return type(remaining)=="number" and remaining<=balance-cost
+    end,10),"Débit des Void Pearls non confirmé")
+    traded+=1
+    task.wait(.45)
+   end
+   return traded
+  end)
+  local close=screen:FindFirstChild("Close",true)
+  if tradeIn.IsOpen() and close and close:IsA("GuiButton") then pcall(activate,close.Activated) end
+  assert(ok,result)
+  ctx.Status(("Void Pearls : %d échange(s) confirmé(s)"):format(result))
+  return true
  end
  if ctx.Exit then
   if player:GetAttribute("InAlienLagoon")~=true then return true end
@@ -54,18 +109,7 @@ return function(ctx)
   assert(flags.Enabled:Get(),"Lagon fermé")
   assert((profile.FishingMastery and profile.FishingMastery.Caught or 0)>=flags.FishRequired:Get(),"Nombre de prises insuffisant pour le lagon")
   assert(util.FastEnough(profile.SpeedPower),"Vitesse insuffisante pour le lagon")
-  local npc=assert(util.Ferryman(),"Alien Ferryman introuvable")
-  local root=assert(npc.PrimaryPart,"Ferryman sans position")
-  ctx.Status("Pêche : trajet vers Alien Ferryman")
-  travel(root.Position,true,false,"Trajet Ferryman interrompu")
-  assert(ctx.Active(),"Pêche interrompue")
-  local prompt=assert(npc:FindFirstChild(util.TalkPromptName,true),"Prompt Talk introuvable")
-  local env=type(getgenv)=="function"and getgenv()or getfenv()
-  assert(type(env.fireproximityprompt)=="function"and type(env.firesignal)=="function","Activation Talk ou dialogue indisponible")
-  ctx.Status("Pêche : Talk, attente du choix Go to Lagoon")
-  env.fireproximityprompt(prompt)
-  local button=assert(waitFor(chooseLagoon,25),"Choix Go to Lagoon non affiché")
-  env.firesignal(button.Activated)
+  visitFerryman(util.FerrymanLines.Choices.Go,"Pêche")
   ctx.Status("Pêche : trajet en bateau vers le lagon")
   assert(waitFor(function()return player:GetAttribute("InAlienLagoon")==true end,30),"Arrivée au lagon non confirmée")
  end
