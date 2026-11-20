@@ -11,16 +11,20 @@ if not player then return end
 O.NextClickAt=os.clock()+60
 function O.TickClicks(now, canClick)
  canClick=canClick or function()return O.ClientKind=="observer" end
- if O.Destroyed or not canClick() then O.NextClickAt=now+60;return end
- if O.ClickBusy or now<O.NextClickAt then return end
- O.NextClickAt=now+60
+ if O.Destroyed or not canClick() then return end
+ if O.ClickBusy or now<O.NextClickAt or now<(O.ClickRetryAt or 0) then return end
  local env=type(getgenv)=="function"and getgenv()or getfenv()
  local press,release,click=env.mouse1press,env.mouse1release,env.mouse1click
  local paired=type(press)=="function"and type(release)=="function"
- if not paired and type(click)~="function"then return end
+ if not paired and type(click)~="function"then
+  O.LastClickStatus="Clics tapis indisponibles sur ce client"
+  O.ClickRetryAt=now+30
+  return
+ end
  O.ClickBusy=true
  task.spawn(function()
   local held=false
+  local count=0
   local ok,why=pcall(function()
    if O.Destroyed or not canClick() then return end
    local camera=workspace.CurrentCamera
@@ -30,14 +34,17 @@ function O.TickClicks(now, canClick)
    end
    for _=1,math.random(3,4)do
     if O.Destroyed or not canClick() then break end
-    if paired then
-     held=true;press();task.wait(.03);release();held=false
-    else click()end
+    if type(click)=="function" then click()
+    else held=true;press();task.wait(.08);release();held=false end
+    count+=1
+    if count==1 then O.NextClickAt=os.clock()+60 end
     task.wait(.15)
    end
   end)
   if held then pcall(release)end
   O.ClickBusy=false
+  if count>0 then O.LastClickStatus=("%d clic(s) envoyé(s) à %s"):format(count,os.date("%H:%M:%S")) end
+  if not ok then O.ClickRetryAt=os.clock()+5;O.LastClickStatus="Échec de la commande de clic" end
   if not ok and not O.Destroyed then warn("[Observer] Clics périodiques : "..tostring(why))end
  end)
 end
