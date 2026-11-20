@@ -2543,6 +2543,7 @@ local function moveActivity(destination, token, interruptForEgg, nextDestination
   if autoActivity=="TO_BUTTERFLIES" and FusionModules.Butterflies.MoveValid and not FusionModules.Butterflies.MoveValid() then
    stopMovement(true);return false,"papillons interrompus"
   end
+  if autoActivity=="STORMY_EGG" and FusionModules.StormyEgg.MoveValid and not FusionModules.StormyEgg.MoveValid() then stopMovement(true);return false,"Stormy Egg interrompu" end
   if autoActivity=="TO_FISHING"and FusionModules.FishingMoveValid and not FusionModules.FishingMoveValid()then stopMovement(true);return false,"pêche interrompue"end
   if autoActivity=="TO_FARM"and FusionModules.CollectionReturnPending then stopMovement(true);return false,"COLLECTION_STOPPED"end
   if autoActivity=="TO_UPGRADE"and FusionModules.UpgradeMoveValid and not FusionModules.UpgradeMoveValid()then stopMovement(true);return false,"upgrade interrompue : priorite au vol ou option OFF"end
@@ -4604,10 +4605,154 @@ function FusionModules.Helpers.RequestFishingEgg(selected,rate)
  }})
  FusionModules.Helpers.ReturnForFishingEgg()
 end
+FusionModules.StormyEgg={RetryAt=0}
+
+function FusionModules.StormyEgg.Available(inProgress)
+ local shop=FusionModules.StormyEgg
+ if FusionModules.Reporting.ClientKind~="admin" or (not inProgress and not treadmillAssigned)
+  or not FusionModules.Helpers.TreadmillOnly() or FusionModules.StormRush.Available()
+  or not Save or os.clock()<shop.RetryAt then return nil end
+ if not shop.Util then
+  local ok,util,flags=pcall(function()
+   return require(ReplicatedStorage.Shared.Util.StormheartCave),require(ReplicatedStorage.Shared.Flags.StormheartCaveFlags)
+  end)
+  if not ok then shop.RetryAt=os.clock()+30;return nil end
+  shop.Util,shop.Flags=util,flags
+ end
+ if not shop.Util.GachaOpen() then return nil end
+ local profile=Save.Peek()
+ local data=profile and profile[shop.Util.ProfileKey]
+ local balance=data and data[shop.Util.CurrencyField]
+ local price=shop.Flags.GachaPrice:Get()
+ if type(balance)~="number" or type(price)~="number" or price<=0 or balance<price
+  or balance==shop.UncertainBalance then return nil end
+ local node=Workspace
+ for _,name in ipairs({"World","Build","Props","Zone8.5Props","Folder","StormheartGacha","Pedestal","BuyPrompt"})do
+  node=node:FindFirstChild(name)
+  if not node then return nil end
+ end
+ if node:IsA("ProximityPrompt") then return node,balance,price end
+end
+
+function FusionModules.StormyEgg.Run(token)
+ local shop=FusionModules.StormyEgg
+ local character,_,root=getCharacterParts()
+ if not root then return end
+ local prompt=shop.Available()
+ if not prompt then return end
+ local function active()
+  return activityValid(token,character) and automaticMode and not stopAfterFlight
+   and not serverHopPending and not FusionModules.CollectionReturnPending
+   and FusionModules.Helpers.TreadmillOnly() and not FusionModules.StormRush.Available()
+ end
+ if not active() then return end
+ local exited,reason=leaveTreadmill(token)
+ if not exited then error(tostring(reason),0) end
+ if not active() or shop.Available(true)~=prompt then return end
+ local pedestal=prompt.Parent
+ if not pedestal or not pedestal:IsA("BasePart") then return end
+ local function inRange()
+  return prompt:IsDescendantOf(Workspace)
+   and (root.Position-pedestal.Position).Magnitude<=math.min(prompt.MaxActivationDistance,shop.Flags.GachaReach:Get())
+ end
+ autoActivity="STORMY_EGG"
+ shop.MoveValid=active
+ local departed,detail=FusionModules.Helpers.DepartSafe(token,active,isSafe(pedestal.Position)==false)
+ if not departed then
+  if active() then error("Stormy Egg · départ : "..tostring(detail),0) end
+  return
+ end
+ local flat=(root.Position-pedestal.Position)*Vector3.new(1,0,1)
+ local direction=flat.Magnitude>.1 and flat.Unit or pedestal.CFrame.LookVector
+ local point=pedestal.Position+direction*4
+ setStatus("Stormy Egg · approche du piédestal")
+ local reached,reason=moveActivity(point,token,true,nil,nil,1.25)
+ if not reached and active() then
+  setStatus("Stormy Egg · contournement vers le piédestal")
+  reached,reason=FusionModules.Helpers.PathMove(point,token,true)
+  if reached and active() then reached,reason=moveActivity(point,token,true,nil,nil,1.25) end
+ end
+ shop.MoveValid=nil
+ if not active() then return end
+ if not reached then error("Stormy Egg · approche : "..tostring(reason),0) end
+ stopMovement(true)
+ RunService.Heartbeat:Wait()
+ if not active() then return end
+ if distanceXZ(root.Position,point)>1.5 or not inRange() then
+  error(("Stormy Egg · arrêt non confirmé, piédestal à %.1f studs"):format((root.Position-pedestal.Position).Magnitude),0)
+ end
+ local tabs=require(ReplicatedStorage.Client.Tabs)
+ local tabName="StormheartCloudEgg"
+ if not tabs.IsActive(tabName) then
+  local deadline=os.clock()+5
+  while active() and inRange() and not prompt.Enabled and os.clock()<deadline do task.wait(.1) end
+  if not active() then return end
+  if not prompt.Enabled or not inRange() then error("Stormy Egg · prompt Achat indisponible",0) end
+  setStatus("Stormy Egg · ouverture de la boutique")
+  local opened=executorTools.ActivateNativePrompt(prompt)
+  deadline=os.clock()+5
+  while opened and active() and not tabs.IsActive(tabName) and os.clock()<deadline do task.wait(.1) end
+  if not active() then return end
+  if not tabs.IsActive(tabName) then error("Stormy Egg · ouverture de la boutique non confirmée",0) end
+  shop.OpenedTabs=tabs
+ end
+ local screen=require(ReplicatedStorage.Client.GUI).Get(tabName)
+ local button=assert(screen and screen.Content.Btns.Buy,"Bouton d’achat introuvable")
+ local activate=assert(executorFunction("firesignal"),"Activation du bouton indisponible")
+ while active() and inRange() and tabs.IsActive(tabName) do
+  local available,balance,price=shop.Available(true)
+  if available~=prompt then return end
+  setStatus("Stormy Egg · achat ("..tostring(price).." Thunderstones)")
+  if button:GetAttribute("Disabled")==true then error("Bouton d’achat indisponible",0) end
+  shop.Purchasing=true
+  shop.UncertainBalance=balance
+  activate(button.Activated)
+  local deadline=os.clock()+5
+  local settled=false
+  repeat
+   local profile=Save.Peek()
+   local data=profile and profile[shop.Util.ProfileKey]
+   local current=data and data[shop.Util.CurrencyField]
+   settled=type(current)=="number" and current<=balance-price
+   if not settled then task.wait(.15) end
+  until settled or os.clock()>=deadline
+  if not settled then
+   shop.UncertainBalance=balance
+   error("Stormy Egg : solde non synchronisé après achat",0)
+  end
+  shop.UncertainBalance=nil
+  shop.Purchasing=false
+  log("ACTION","Stormy Egg : achat confirmé")
+  task.wait(.45)
+ end
+end
+
+function FusionModules.StormyEgg.Idle(token)
+ local shop=FusionModules.StormyEgg
+ local ok,reason=FusionModules.Protect("STORMY_EGG",shop.Run,token)
+ if shop.OpenedTabs and shop.OpenedTabs.IsActive("StormheartCloudEgg") then
+  shop.OpenedTabs.Deactivate({instant=true})
+ end
+ shop.OpenedTabs=nil
+ shop.MoveValid=nil
+ shop.Purchasing=false
+ shop.RetryAt=math.max(shop.RetryAt,os.clock()+(ok and 5 or 20))
+ if generation==token then
+  stopMovement(true)
+  autoActivity="IDLE"
+  if not ok then
+   setStatus(tostring(reason):match("^[^\n]+") or "Stormy Egg · achat interrompu")
+   task.wait(2)
+  end
+ end
+end
+
+
 function FusionModules.Helpers.VoidPearlTradeAvailable()
  local runtime=FusionModules.AdminRuntime
  if FusionModules.Reporting.ClientKind~="admin" or not runtime or not runtime.Initialized
-  or os.clock()<(FusionModules.VoidPearlRetryAt or 0) or not FusionModules.Helpers.CanStartIdleActivity() then return false end
+  or not treadmillAssigned or os.clock()<(FusionModules.VoidPearlRetryAt or 0)
+  or not FusionModules.Helpers.TreadmillOnly() or FusionModules.StormRush.Available() then return false end
  local profile=Save.Peek()
  local pearls=profile and profile.AlienLagoon and profile.AlienLagoon.VoidPearls
  if type(pearls)~="number" or pearls<=0 then return false end
@@ -4624,14 +4769,10 @@ function FusionModules.Helpers.VoidPearlTrade(token)
  local runtime=FusionModules.AdminRuntime
  local character=player.Character
  local function active()
-  return activityValid(token,character) and automaticMode and FusionModules.Helpers.CanStartIdleActivity()
+  return activityValid(token,character) and automaticMode and FusionModules.Helpers.TreadmillOnly() and not FusionModules.StormRush.Available()
  end
  local ok,reason=FusionModules.Protect("VOID_PEARLS",function()
-  runtime.StopFishing()
-  if player:GetAttribute("InAlienLagoon")==true then
-   assert(runtime.LeaveFishingLagoon(),"Retour du lagon interrompu")
-  end
-  if not active() then return end
+  if not FusionModules.Helpers.VoidPearlTradeAvailable() or not active() then return end
   local left,why=leaveTreadmill(token)
   assert(left,why)
   runtime.PrepareFishingTravel({TradePearls=true,Active=active,Move=FusionModules.Helpers.MoveForFishing,Status=setStatus})
@@ -4657,7 +4798,7 @@ function FusionModules.Helpers.FishingIdle(token)
   local selected,rate=selectBest()
   if selected then FusionModules.Helpers.RequestFishingEgg(selected,rate)
   elseif FusionModules.RemoteHop.LocalReturnTarget then FusionModules.Helpers.ReturnForFishingEgg()
-  elseif FusionModules.SlickRick.Available() or FusionModules.StormRush.Available(true) or FusionModules.Skyfall.Available() or FusionModules.Helpers.VoidPearlTradeAvailable() then break
+  elseif FusionModules.SlickRick.Available() or FusionModules.StormRush.Available(true) or FusionModules.Skyfall.Available() then break
   end
   task.wait(.1)
  end
@@ -4720,7 +4861,7 @@ local function idleOnTreadmill(token)
 	if destroyed or not autoEnabled or generation ~= token then return true end
 	setStatus("TREADMILL : entrainement, attente d'un oeuf...")
 	while autoEnabled and generation == token and automaticMode and not queuePaused
-		and not FusionModules.Helpers.FishingMode()and FusionModules.Options.AutoTreadmill and next(queuedEggs) == nil and not activityRecheckPending and not FusionModules.Butterflies.Available() and not FusionModules.Skyfall.Available() and not FusionModules.SlickRick.Available() and not FusionModules.StormRush.Available() and not FusionModules.Helpers.VoidPearlTradeAvailable() and not destroyed do
+		and not FusionModules.Helpers.FishingMode()and FusionModules.Options.AutoTreadmill and next(queuedEggs) == nil and not activityRecheckPending and not FusionModules.Butterflies.Available() and not FusionModules.Skyfall.Available() and not FusionModules.SlickRick.Available() and not FusionModules.StormRush.Available() and not FusionModules.Helpers.VoidPearlTradeAvailable() and not FusionModules.StormyEgg.Available() and not destroyed do
 		serviceWallMaintenance(token)
   if FusionModules.AdminRuntime and FusionModules.AdminRuntime.ProgressTravelling and FusionModules.AdminRuntime.ProgressTravelling()then task.wait(CONFIG.ScanInterval);continue end
 		if not treadmillAssigned and autoActivity ~= "TREADMILL" then return true end
@@ -4950,6 +5091,8 @@ local function worker(token)
 				FusionModules.Butterflies.Idle(token)
             elseif automaticMode and FusionModules.StormRush.Available() then
                 FusionModules.StormRush.Idle(token)
+            elseif automaticMode and FusionModules.StormyEgg.Available() then
+                FusionModules.StormyEgg.Idle(token)
 			elseif automaticMode then
 				serverSearchState = "OFF"
 				local ok, reason = idleOnTreadmill(token)
@@ -5450,7 +5593,7 @@ function FusionModules.RemoteHop.Receive(message)
 end
 function FusionModules.RemoteHop.Try()
  if autoActivity=="STORM_RUSH" or (FusionModules.StormRush.Managed and FusionModules.StormRush.Inside()) then return false end
- if FusionModules.SlickRick and FusionModules.SlickRick.Purchasing then return false end
+ if FusionModules.StormyEgg.Purchasing or (FusionModules.SlickRick and FusionModules.SlickRick.Purchasing) then return false end
  if FusionModules.BetweenFlights then return false end
  local hop=FusionModules.RemoteHop
  if hop.Processing or serverHopPending or not hop.Pending or os.clock()<hop.RetryAt then return false end
