@@ -4803,17 +4803,19 @@ function FusionModules.StormyEgg.Run(token)
  local tabs=require(ReplicatedStorage.Client.Tabs)
  local tabName="StormheartCloudEgg"
  if not tabs.IsActive(tabName) then
-  local deadline=os.clock()+5
-  while active() and inRange() and not prompt.Enabled and os.clock()<deadline do task.wait(.1) end
-  if not active() then return end
-  if not prompt.Enabled or not inRange() then error("Stormy Egg · prompt Achat indisponible",0) end
-  setStatus("Stormy Egg · ouverture de la boutique")
-  local opened=executorTools.ActivateNativePrompt(prompt)
-  deadline=os.clock()+5
-  while opened and active() and not tabs.IsActive(tabName) and os.clock()<deadline do task.wait(.1) end
-  if not active() then return end
-  if not tabs.IsActive(tabName) then error("Stormy Egg · ouverture de la boutique non confirmée",0) end
   shop.OpenedTabs=tabs
+  local nextAttempt=0
+  while active() and inRange() and not tabs.IsActive(tabName) do
+   local now=os.clock()
+   if prompt.Enabled and now>=nextAttempt then
+    setStatus("Stormy Egg · ouverture de la boutique")
+    executorTools.ActivateNativePrompt(prompt)
+    nextAttempt=os.clock()+1
+   end
+   task.wait(.1)
+  end
+  if not active() then return end
+  if not tabs.IsActive(tabName) then error("Stormy Egg · sorti de la portée du prompt",0) end
  end
  local screen=require(ReplicatedStorage.Client.GUI).Get(tabName)
  local button=assert(screen and screen.Content.Btns.Buy,"Bouton d’achat introuvable")
