@@ -4604,6 +4604,43 @@ function FusionModules.Helpers.RequestFishingEgg(selected,rate)
  }})
  FusionModules.Helpers.ReturnForFishingEgg()
 end
+function FusionModules.Helpers.VoidPearlTradeAvailable()
+ local runtime=FusionModules.AdminRuntime
+ if FusionModules.Reporting.ClientKind~="admin" or not runtime or not runtime.Initialized
+  or os.clock()<(FusionModules.VoidPearlRetryAt or 0) or not FusionModules.Helpers.CanStartIdleActivity() then return false end
+ local profile=Save.Peek()
+ local pearls=profile and profile.AlienLagoon and profile.AlienLagoon.VoidPearls
+ if type(pearls)~="number" or pearls<=0 then return false end
+ local sharedModules=ReplicatedStorage:FindFirstChild("Shared")
+ local flagsFolder=sharedModules and sharedModules:FindFirstChild("Flags")
+ local module=flagsFolder and flagsFolder:FindFirstChild("AlienLagoonFlags")
+ if not module then return false end
+ local flags=require(module)
+ local cost=flags.TradePearlCost:Get()
+ return cost>0 and pearls>=cost
+end
+
+function FusionModules.Helpers.VoidPearlTrade(token)
+ local runtime=FusionModules.AdminRuntime
+ local character=player.Character
+ local function active()
+  return activityValid(token,character) and automaticMode and FusionModules.Helpers.CanStartIdleActivity()
+ end
+ local ok,reason=FusionModules.Protect("VOID_PEARLS",function()
+  runtime.StopFishing()
+  if player:GetAttribute("InAlienLagoon")==true then
+   assert(runtime.LeaveFishingLagoon(),"Retour du lagon interrompu")
+  end
+  if not active() then return end
+  local left,why=leaveTreadmill(token)
+  assert(left,why)
+  runtime.PrepareFishingTravel({TradePearls=true,Active=active,Move=FusionModules.Helpers.MoveForFishing,Status=setStatus})
+ end)
+ FusionModules.VoidPearlRetryAt=os.clock()+(ok and 3 or 60)
+ if not ok and active() then setStatus("Void Pearls : "..tostring(reason)) end
+ autoActivity="IDLE"
+end
+
 function FusionModules.Helpers.FishingIdle(token)
  local runtime=FusionModules.AdminRuntime
  if not runtime or not runtime.Initialized then task.wait(.5);return true end
@@ -4620,7 +4657,7 @@ function FusionModules.Helpers.FishingIdle(token)
   local selected,rate=selectBest()
   if selected then FusionModules.Helpers.RequestFishingEgg(selected,rate)
   elseif FusionModules.RemoteHop.LocalReturnTarget then FusionModules.Helpers.ReturnForFishingEgg()
-  elseif FusionModules.SlickRick.Available() or FusionModules.StormRush.Available(true) or FusionModules.Skyfall.Available() then break
+  elseif FusionModules.SlickRick.Available() or FusionModules.StormRush.Available(true) or FusionModules.Skyfall.Available() or FusionModules.Helpers.VoidPearlTradeAvailable() then break
   end
   task.wait(.1)
  end
@@ -4683,7 +4720,7 @@ local function idleOnTreadmill(token)
 	if destroyed or not autoEnabled or generation ~= token then return true end
 	setStatus("TREADMILL : entrainement, attente d'un oeuf...")
 	while autoEnabled and generation == token and automaticMode and not queuePaused
-		and not FusionModules.Helpers.FishingMode()and FusionModules.Options.AutoTreadmill and next(queuedEggs) == nil and not activityRecheckPending and not FusionModules.Butterflies.Available() and not FusionModules.Skyfall.Available() and not FusionModules.SlickRick.Available() and not FusionModules.StormRush.Available() and not destroyed do
+		and not FusionModules.Helpers.FishingMode()and FusionModules.Options.AutoTreadmill and next(queuedEggs) == nil and not activityRecheckPending and not FusionModules.Butterflies.Available() and not FusionModules.Skyfall.Available() and not FusionModules.SlickRick.Available() and not FusionModules.StormRush.Available() and not FusionModules.Helpers.VoidPearlTradeAvailable() and not destroyed do
 		serviceWallMaintenance(token)
   if FusionModules.AdminRuntime and FusionModules.AdminRuntime.ProgressTravelling and FusionModules.AdminRuntime.ProgressTravelling()then task.wait(CONFIG.ScanInterval);continue end
 		if not treadmillAssigned and autoActivity ~= "TREADMILL" then return true end
@@ -4904,6 +4941,8 @@ local function worker(token)
                 FusionModules.StormRush.Idle(token)
             elseif automaticMode and FusionModules.Skyfall.Available() then
                 FusionModules.Skyfall.Idle(token)
+            elseif automaticMode and FusionModules.Helpers.VoidPearlTradeAvailable() then
+                FusionModules.Helpers.VoidPearlTrade(token)
             elseif automaticMode and FusionModules.Helpers.FishingMode() then
                 local ok,reason=FusionModules.Helpers.FishingIdle(token)
                 if not ok then stopAutomation("Cosmic Eclipse : "..tostring(reason));return end
