@@ -4940,7 +4940,6 @@ do
   local prompt=(trigger and trigger:FindFirstChild("EnchantedTreePrompt",true))
    or (tree and tree:FindFirstChild("EnchantedTreePrompt",true))
   local point=anchor and anchor:IsA("Attachment") and anchor.WorldPosition
-  if not point and game.PlaceId==80978566387592 then point=Vector3.new(7408.9,71,-311) end
   return prompt,point
  end
  local function machine()
@@ -4974,7 +4973,7 @@ do
   if not trade.Flags.Enabled:Get() then return false end
   if not trade.Inside() then
    local prompt,point=entrance()
-   if not prompt and not point then return false end
+   if not point and not (prompt and prompt:IsA("ProximityPrompt")) then return false end
   end
   return recipe()~=nil
  end
@@ -5071,7 +5070,10 @@ do
    end
   end
   local prompt
-  if not waitFor(function()prompt=machine();return prompt~=nil end,5,active) then return end
+  if not waitFor(function()prompt=machine();return prompt and prompt:IsA("ProximityPrompt") and prompt.Enabled end,5,active) then
+   if active() then error("Prompt de la machine à papillons indisponible",0) end
+   return
+  end
   local tabs=require(ReplicatedStorage.Client.Tabs)
   setStatus("Papillons · trajet vers la machine d’échange")
   local opened,reason=activate(prompt,token,active)
@@ -5080,7 +5082,10 @@ do
    return
   end
   trade.Tabs=tabs
-  if not waitFor(function()return tabs.IsActive("ButterflyMachine")end,4,active) then return end
+  if not waitFor(function()return tabs.IsActive("ButterflyMachine")end,4,active) then
+   if active() then error("Interface de la machine à papillons non ouverte",0) end
+   return
+  end
   local screen=require(ReplicatedStorage.Client.GUI).Get("ButterflyMachine")
   local activateButton=assert(executorFunction("firesignal"),"Activation du bouton indisponible")
   local tradeButton=assert(screen and screen:FindFirstChild("TradeButton",true),"Bouton d’échange introuvable")
@@ -5106,11 +5111,15 @@ do
   end
  end
  function trade.Idle(token)
-  FusionModules.Protect("BUTTERFLY_TRADE",trade.Run,token)
+  local ok,reason=FusionModules.Protect("BUTTERFLY_TRADE",trade.Run,token)
   if trade.Tabs and trade.Tabs.IsActive("ButterflyMachine") then pcall(trade.Tabs.Deactivate,{instant=true}) end
   trade.Tabs=nil
   trade.MoveValid=nil
-  trade.RetryAt=os.clock()+15
+  trade.RetryAt=os.clock()+(ok and 15 or 120)
+  if not ok and generation==token then
+   FusionModules.InventoryNotice="Papillons · "..(tostring(reason):match("^[^\n]+") or "échange interrompu").." · nouvelle tentative dans 120 s"
+   setStatus(FusionModules.InventoryNotice)
+  end
   if generation==token then stopMovement(true);autoActivity="IDLE" end
  end
 end
