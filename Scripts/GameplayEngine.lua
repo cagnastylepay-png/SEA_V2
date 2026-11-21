@@ -4130,6 +4130,13 @@ function FusionModules.TurkeyRampage.HerdTarget(position)
  return best
 end
 
+function FusionModules.TurkeyRampage.HerdCharging()
+ -- HerdView creates its native ChargeLine only for the telegraphed rush.
+ -- Do not guess from motion and do not suppress ordinary Herd combat.
+ local terrain=Workspace:FindFirstChildOfClass("Terrain")
+ return terrain and terrain:FindFirstChild("ChargeLine",true)~=nil or false
+end
+
 function FusionModules.TurkeyRampage.Run(token)
  local turkey=FusionModules.TurkeyRampage
  local character,humanoid,root=getCharacterParts()
@@ -4175,14 +4182,16 @@ function FusionModules.TurkeyRampage.Run(token)
   local target=herd or boss
   local targetPosition=target.Position
   if target~=lastTarget then stopMovement(true);lastTarget=target end
-  local delta=root.Position-boss.Position
+  local threat=herd and turkey.HerdCharging() and herd or boss
+  local delta=root.Position-threat.Position
   local horizontal=Vector3.new(delta.X,0,delta.Z)
   local direction=horizontal.Magnitude>.1 and horizontal.Unit or Vector3.new(1,0,0)
-  local dangerous=phase=="Stomp" or phase=="Finale"
+  local herdCharge=herd~=nil and threat==herd
+  local dangerous=phase=="Stomp" or phase=="Finale" or herdCharge
   if dangerous then
    if not dodging then stopMovement(true);dodging=true end
-   setStatus("Turkey Rampage · esquive "..tostring(phase))
-   move(boss.Position+direction*55,{Radius=8})
+   setStatus(herdCharge and "Turkey Rampage · esquive charge Herd" or "Turkey Rampage · esquive "..tostring(phase))
+   move(threat.Position+direction*(herdCharge and 30 or 55),{Radius=8})
   else
    local distance=distanceXZ(root.Position,targetPosition)
    if distance>6 then
