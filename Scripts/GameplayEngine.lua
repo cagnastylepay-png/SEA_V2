@@ -4074,7 +4074,7 @@ end
 
 -- Turkey Rampage is rendered from an authoritative leg/state packet.  We only
 -- use the same tagged hitbox and native Tool activation as the game client.
-FusionModules.TurkeyRampage={RetryAt=0,NextStateAt=0,State=nil,Root=nil}
+FusionModules.TurkeyRampage={RetryAt=0,NextStateAt=0,State=nil,Root=nil,Tags=game:GetService("CollectionService")}
 
 function FusionModules.TurkeyRampage.Bind(remotes)
  local turkey=FusionModules.TurkeyRampage
@@ -4114,6 +4114,22 @@ function FusionModules.TurkeyRampage.Available()
  if state and root then return state,root end
 end
 
+-- The Herd is made of the small turkeys.  Their game-created proxies are
+-- tagged BatAutoSwing and expose health, so they are preferred for feathers.
+function FusionModules.TurkeyRampage.HerdTarget(position)
+ local turkey=FusionModules.TurkeyRampage
+ local best,bestDistance
+ for _,part in ipairs(turkey.Tags:GetTagged("BatAutoSwing"))do
+  local health=part:GetAttribute("Health")
+  if part:IsA("BasePart") and part.Name~="TurkeyRampageKingSwing"
+   and type(health)=="number" and health>0 then
+   local distance=distanceXZ(position,part.Position)
+   if not best or distance<bestDistance then best,bestDistance=part,distance end
+  end
+ end
+ return best
+end
+
 function FusionModules.TurkeyRampage.Run(token)
  local turkey=FusionModules.TurkeyRampage
  local character,humanoid,root=getCharacterParts()
@@ -4146,6 +4162,7 @@ function FusionModules.TurkeyRampage.Run(token)
  turkey.EquippedBat=bat
  local nextSwing=0
  local dodging=false
+ local lastTarget
  while targetActive()do
   state,boss=turkey.Available()
   if not state or not boss then break end
@@ -4154,20 +4171,26 @@ function FusionModules.TurkeyRampage.Run(token)
    humanoid:EquipTool(bat)
   end
   local phase=state.Phase
+  local herd=turkey.HerdTarget(root.Position)
+  local target=herd or boss
+  local targetPosition=target.Position
+  if target~=lastTarget then stopMovement(true);lastTarget=target end
   local delta=root.Position-boss.Position
   local horizontal=Vector3.new(delta.X,0,delta.Z)
   local direction=horizontal.Magnitude>.1 and horizontal.Unit or Vector3.new(1,0,0)
   local dangerous=phase=="Stomp" or phase=="Finale"
   if dangerous then
-   dodging=true
+   if not dodging then stopMovement(true);dodging=true end
    setStatus("Turkey Rampage · esquive "..tostring(phase))
    move(boss.Position+direction*55,{Radius=8})
   else
-   local distance=distanceXZ(root.Position,boss.Position)
-   if distance>7 then
-    if dodging then setStatus("Turkey Rampage · retour sur le boss")else setStatus("Turkey Rampage · suivi du boss")end
+   local distance=distanceXZ(root.Position,targetPosition)
+   if distance>6 then
+    if herd then setStatus("Turkey Rampage · petits boss prioritaires")
+    elseif dodging then setStatus("Turkey Rampage · retour sur le boss")else setStatus("Turkey Rampage · suivi du boss")end
     dodging=false
-    move(boss.Position-direction*5,{Radius=5})
+    local followDirection=distanceXZ(root.Position,targetPosition)>.1 and Vector3.new(root.Position.X-targetPosition.X,0,root.Position.Z-targetPosition.Z).Unit or Vector3.new(1,0,0)
+    move(targetPosition-followDirection*4,{Radius=4})
    else
     if dodging then dodging=false end
     stopMovement(true)
@@ -4180,7 +4203,7 @@ function FusionModules.TurkeyRampage.Run(token)
     end
    end
   end
-  task.wait(CONFIG.ScanInterval)
+  task.wait(.05)
  end
  turkey.MoveValid=nil
 end
