@@ -102,6 +102,7 @@ FusionModules.Options.GroupMode=true
 FusionModules.Options.AutoStormGlass=false
 FusionModules.Options.AutoSlickRick=false
 FusionModules.Options.AutoStormRush=false
+FusionModules.Options.AutoTurkeyRampage=true
 FusionModules.Options.AutoPlotUpgrade=false
 FusionModules.Options.IdleMode="Treadmill"
 FusionModules.Options.AutoCosmicEclipse=false
@@ -411,7 +412,7 @@ local function loadSettings()
 		minimumRatePerSecond = minimum * 1e9
 	end
  for key,value in pairs(FusionModules.Options)do
-  if type(value)=="boolean"and key~="AutoCosmicEclipse"and key~="AutoSkyfall"and key~="GroupMode"and key~="AutoStormGlass"and key~="AutoStormRush"and key~="AutoSlickRick"and key~="AutoPlotUpgrade"and key~="AutoTreadmillUpgrade"and key~="AutoHelp"and key~="AutoMutations"and key~="AutoSellAnimals"and not key:match("^Mutation")then FusionModules.Options[key]=automaticMode end
+  if type(value)=="boolean"and key~="AutoCosmicEclipse"and key~="AutoSkyfall"and key~="GroupMode"and key~="AutoStormGlass"and key~="BetaMovement"and key~="AutoStormRush"and key~="AutoTurkeyRampage"and key~="AutoSlickRick"and key~="AutoPlotUpgrade"and key~="AutoTreadmillUpgrade"and key~="AutoHelp"and key~="AutoMutations"and key~="AutoSellAnimals"and not key:match("^Mutation")then FusionModules.Options[key]=automaticMode end
  end
  FusionModules.Options.AutoEggsMin=minimumRatePerSecond
  FusionModules.Options.AutoSellMax=minimumRatePerSecond
@@ -2551,6 +2552,10 @@ local function moveActivity(destination, token, interruptForEgg, nextDestination
   if autoActivity=="STORM_RUSH" and FusionModules.StormRush.MoveValid and not FusionModules.StormRush.MoveValid() then
    stopMovement(true);return false,"Storm Rush interrompu"
   end
+  if autoActivity=="TURKEY_RAMPAGE" and FusionModules.TurkeyRampage.MoveValid and not FusionModules.TurkeyRampage.MoveValid() then
+   stopMovement(true);return false,"Turkey Rampage interrompu"
+  end
+  if autoActivity=="TO_TREADMILL" and FusionModules.TurkeyRampage.Available() then stopMovement(true);return false,"turkey rampage"end
   if autoActivity=="TO_TREADMILL" and FusionModules.StormRush.Available() then stopMovement(true);return false,"storm rush"end
   if autoActivity=="SLICK_RICK" and FusionModules.SlickRick.MoveValid and not FusionModules.SlickRick.MoveValid() then
    stopMovement(true);return false,"Slick Rick interrompu"
@@ -3661,7 +3666,7 @@ function FusionModules.Butterflies.Idle(token)
  if tool.Parent~=character then humanoid:EquipTool(tool) end
  local function active()
   return activityValid(token,character) and automaticMode and not stopAfterFlight and next(queuedEggs)==nil
-   and b.Revision==revision and b.Available() and not FusionModules.SlickRick.Available()
+   and b.Revision==revision and b.Available() and not FusionModules.SlickRick.Available() and not FusionModules.TurkeyRampage.Available()
    and not FusionModules.Skyfall.Available() and not FusionModules.Helpers.FishingMode()
  end
  autoActivity="TO_BUTTERFLIES"
@@ -3690,7 +3695,7 @@ function FusionModules.Butterflies.Idle(token)
  local nextSwingAt=0
  setStatus("Papillons · collecte au filet")
  while FusionModules.Options.AutoPapillon and activityValid(token,character) and automaticMode and not stopAfterFlight
-  and b.Revision==revision and Workspace:GetServerTimeNow()<b.Until and not FusionModules.Skyfall.Available() and not FusionModules.Helpers.FishingMode() and not FusionModules.SlickRick.Available() do
+  and b.Revision==revision and Workspace:GetServerTimeNow()<b.Until and not FusionModules.Skyfall.Available() and not FusionModules.Helpers.FishingMode() and not FusionModules.SlickRick.Available() and not FusionModules.TurkeyRampage.Available() do
   local present,net=b.Available(true)
   if not present then break end
   if net.Parent~=character then humanoid:EquipTool(net) end
@@ -3969,7 +3974,7 @@ function FusionModules.Skyfall.Run(token)
  local function active()
   return activityValid(token,character) and automaticMode and not stopAfterFlight
    and not serverHopPending and not FusionModules.CollectionReturnPending
-   and next(queuedEggs)==nil and sky.Available()~=nil and not FusionModules.SlickRick.Available()
+   and next(queuedEggs)==nil and sky.Available()~=nil and not FusionModules.SlickRick.Available() and not FusionModules.TurkeyRampage.Available()
    and not FusionModules.StormRush.Available(true)
  end
  if player:GetAttribute("InAlienLagoon")==true then
@@ -4067,6 +4072,131 @@ function FusionModules.Skyfall.Idle(token)
  if not ok then sky.RetryAt=os.clock()+10 else sky.RetryAt=os.clock()+1 end
 end
 
+-- Turkey Rampage is rendered from an authoritative leg/state packet.  We only
+-- use the same tagged hitbox and native Tool activation as the game client.
+FusionModules.TurkeyRampage={RetryAt=0,NextStateAt=0,State=nil,Root=nil}
+
+function FusionModules.TurkeyRampage.Bind(remotes)
+ local turkey=FusionModules.TurkeyRampage
+ if FusionModules.Reporting.ClientKind~="admin" or not remotes.TurkeyRampage then return end
+ turkey.Remotes=remotes.TurkeyRampage
+ turkey.Util=require(ReplicatedStorage.Shared.Util.TurkeyRampage)
+ turkey.Flags=require(ReplicatedStorage.Shared.Flags.TurkeyRampageFlags)
+end
+
+function FusionModules.TurkeyRampage.Refresh()
+ local turkey=FusionModules.TurkeyRampage
+ if not turkey.Remotes or not turkey.Util or not turkey.Flags then return nil end
+ local now=os.clock()
+ if now<turkey.NextStateAt then return turkey.State,turkey.Root end
+ turkey.NextStateAt=now+.15
+ local ok,state=pcall(function()return turkey.Remotes.AskState:InvokeServer()end)
+ if not ok or type(state)~="table" or type(state.Leg)~="table" then
+  turkey.State,turkey.Root=nil,nil
+  return nil
+ end
+ local scale=1.5
+ pcall(function()scale=turkey.Flags.KingScale:Get()end)
+ local built,root=pcall(turkey.Util.KingRoot,state.Leg,turkey.Util.Now(),scale)
+ if not built or typeof(root)~="CFrame" then
+  turkey.State,turkey.Root=nil,nil
+  return nil
+ end
+ turkey.State,turkey.Root=state,root
+ return state,root
+end
+
+function FusionModules.TurkeyRampage.Available()
+ local turkey=FusionModules.TurkeyRampage
+ if FusionModules.Reporting.ClientKind~="admin" or not FusionModules.Options.AutoTurkeyRampage
+  or os.clock()<turkey.RetryAt or not turkey.Util or not turkey.Util.Live() then return nil end
+ local state,root=turkey.Refresh()
+ if state and root then return state,root end
+end
+
+function FusionModules.TurkeyRampage.Run(token)
+ local turkey=FusionModules.TurkeyRampage
+ local character,humanoid,root=getCharacterParts()
+ if not character or not humanoid or not root then return end
+ local function active()
+  return activityValid(token,character) and automaticMode and not stopAfterFlight
+   and not serverHopPending and not FusionModules.CollectionReturnPending
+   and next(queuedEggs)==nil and turkey.Available()~=nil and not FusionModules.SlickRick.Available()
+ end
+ if player:GetAttribute("InAlienLagoon")==true then
+  local runtime=FusionModules.AdminRuntime
+  if not runtime then return end
+  runtime.StopFishing()
+  if not runtime.LeaveFishingLagoon()then return end
+ end
+ if not active()then return end
+ local left,detail=leaveTreadmill(token)
+ if not left then error(tostring(detail),0)end
+ if not active()then return end
+ local state,boss=turkey.Available()
+ if not state or not boss then return end
+ local function targetActive()return active()end
+ autoActivity="TURKEY_RAMPAGE"
+ turkey.MoveValid=targetActive
+ setStatus("Turkey Rampage · trajet vers le boss")
+ local departed=FusionModules.Helpers.DepartSafe(token,targetActive,isSafe(boss.Position)==false)
+ if not departed then turkey.MoveValid=nil;return end
+ local bat=FusionModules.BatCombat.FindBest(character,player:FindFirstChildOfClass("Backpack"))
+ if not bat then error("Turkey Rampage : aucune batte disponible",0)end
+ turkey.EquippedBat=bat
+ local nextSwing=0
+ local dodging=false
+ while targetActive()do
+  state,boss=turkey.Available()
+  if not state or not boss then break end
+  if bat.Parent~=character then
+   if not bat.Parent then break end
+   humanoid:EquipTool(bat)
+  end
+  local phase=state.Phase
+  local delta=root.Position-boss.Position
+  local horizontal=Vector3.new(delta.X,0,delta.Z)
+  local direction=horizontal.Magnitude>.1 and horizontal.Unit or Vector3.new(1,0,0)
+  local dangerous=phase=="Stomp" or phase=="Finale"
+  if dangerous then
+   dodging=true
+   setStatus("Turkey Rampage · esquive "..tostring(phase))
+   move(boss.Position+direction*55,{Radius=8})
+  else
+   local distance=distanceXZ(root.Position,boss.Position)
+   if distance>7 then
+    if dodging then setStatus("Turkey Rampage · retour sur le boss")else setStatus("Turkey Rampage · suivi du boss")end
+    dodging=false
+    move(boss.Position-direction*5,{Radius=5})
+   else
+    if dodging then dodging=false end
+    stopMovement(true)
+    local cooldown=bat:GetAttribute("CooldownEndTime")
+    local now=os.clock()
+    if now>=nextSwing and (type(cooldown)~="number" or Workspace:GetServerTimeNow()>=cooldown) then
+     nextSwing=now+.7
+     bat:Activate()
+     setStatus("Turkey Rampage · frappe automatique")
+    end
+   end
+  end
+  task.wait(CONFIG.ScanInterval)
+ end
+ turkey.MoveValid=nil
+end
+
+function FusionModules.TurkeyRampage.Idle(token)
+ local turkey=FusionModules.TurkeyRampage
+ local ok=FusionModules.Protect("TURKEY_RAMPAGE",turkey.Run,token)
+ turkey.MoveValid=nil
+ local bat=turkey.EquippedBat
+ turkey.EquippedBat=nil
+ local backpack=player:FindFirstChildOfClass("Backpack")
+ if bat and backpack and bat.Parent==player.Character then pcall(function()bat:Deactivate();bat.Parent=backpack end)end
+ if generation==token then stopMovement(true);autoActivity="IDLE"end
+ turkey.RetryAt=os.clock()+(ok and 1 or 8)
+end
+
 FusionModules.StormRush={RetryAt=0}
 
 function FusionModules.StormRush.Bind(remotes)
@@ -4096,12 +4226,12 @@ function FusionModules.Helpers.CanStartIdleActivity()
  return next(queuedEggs)==nil and not stopAfterFlight and not serverHopPending
   and not FusionModules.CollectionReturnPending
   and not (FusionModules.RemoteHop and FusionModules.RemoteHop.Pending)
-  and not FusionModules.SlickRick.Available()
+  and not FusionModules.SlickRick.Available() and not FusionModules.TurkeyRampage.Available()
 end
 
 function FusionModules.Helpers.TreadmillOnly()
  return FusionModules.Options.AutoTreadmill and FusionModules.Helpers.CanStartIdleActivity()
-  and not FusionModules.Helpers.FishingMode() and not FusionModules.Skyfall.Available()
+  and not FusionModules.Helpers.FishingMode() and not FusionModules.Skyfall.Available() and not FusionModules.TurkeyRampage.Available()
   and not FusionModules.Butterflies.Available()
 end
 
@@ -5221,7 +5351,7 @@ function FusionModules.Helpers.FishingIdle(token)
   local selected,rate=selectBest()
   if selected then FusionModules.Helpers.RequestFishingEgg(selected,rate)
   elseif FusionModules.RemoteHop.LocalReturnTarget then FusionModules.Helpers.ReturnForFishingEgg()
-  elseif FusionModules.SlickRick.Available() or FusionModules.StormRush.Available(true) or FusionModules.Skyfall.Available() then break
+  elseif FusionModules.SlickRick.Available() or FusionModules.TurkeyRampage.Available() or FusionModules.StormRush.Available(true) or FusionModules.Skyfall.Available() then break
   end
   task.wait(.1)
  end
@@ -5263,7 +5393,7 @@ local function idleOnTreadmill(token)
 		local destination = bottom.Position + Vector3.new(0, humanoid.HipHeight + 2, 0)
 		local ok, reason = measureAction("ENTREE_TAPIS",moveActivity,destination,token,true)
 		if not ok then
-			if reason == "nouvel oeuf"or reason=="papillons"or reason=="tapis OFF"or reason=="skyfall"or reason=="eclipse"or reason=="slick rick"or reason=="storm rush"then return true end
+			if reason == "nouvel oeuf"or reason=="papillons"or reason=="tapis OFF"or reason=="skyfall"or reason=="eclipse"or reason=="slick rick"or reason=="turkey rampage"or reason=="storm rush"then return true end
 			return false, reason
 		end
 		-- The normal controller detects entry with its downward raycast.
@@ -5283,7 +5413,7 @@ local function idleOnTreadmill(token)
 	if destroyed or not autoEnabled or generation ~= token then return true end
 	setStatus("TREADMILL : entrainement, attente d'un oeuf...")
 	while autoEnabled and generation == token and automaticMode and not queuePaused
-		and not FusionModules.Helpers.FishingMode()and FusionModules.Options.AutoTreadmill and next(queuedEggs) == nil and not activityRecheckPending and not FusionModules.Butterflies.Available() and not FusionModules.Skyfall.Available() and not FusionModules.SlickRick.Available() and not FusionModules.StormRush.Available() and not FusionModules.Helpers.ExchangeRouteAvailable() and not destroyed do
+		and not FusionModules.Helpers.FishingMode()and FusionModules.Options.AutoTreadmill and next(queuedEggs) == nil and not activityRecheckPending and not FusionModules.Butterflies.Available() and not FusionModules.Skyfall.Available() and not FusionModules.SlickRick.Available() and not FusionModules.TurkeyRampage.Available() and not FusionModules.StormRush.Available() and not FusionModules.Helpers.ExchangeRouteAvailable() and not destroyed do
 		serviceWallMaintenance(token)
   if FusionModules.AdminRuntime and FusionModules.AdminRuntime.ProgressTravelling and FusionModules.AdminRuntime.ProgressTravelling()then task.wait(CONFIG.ScanInterval);continue end
 		if not treadmillAssigned or autoActivity ~= "TREADMILL" then return true end
@@ -5505,6 +5635,8 @@ local function worker(token)
 			directNext = false
 			if automaticMode and FusionModules.SlickRick.Available() then
                 FusionModules.SlickRick.Idle(token)
+            elseif automaticMode and FusionModules.TurkeyRampage.Available() then
+                FusionModules.TurkeyRampage.Idle(token)
             elseif automaticMode and FusionModules.StormRush.Available(true) then
                 FusionModules.StormRush.Idle(token)
             elseif automaticMode and FusionModules.Skyfall.Available() then
@@ -5621,6 +5753,7 @@ local function initialize()
 	EggGrowthPolicy = loadModule("Shared.Eggs.PlacedEggGrowthPresentationPolicy")
 	local remotes = loadModule("Shared.Remotes")
  FusionModules.Protect("STORM_RUSH_INIT",FusionModules.StormRush.Bind,remotes)
+ FusionModules.Protect("TURKEY_RAMPAGE_INIT",FusionModules.TurkeyRampage.Bind,remotes)
 
  -- Subscribe before fetching so a late snapshot cannot overwrite a newer event.
  do
@@ -6341,6 +6474,78 @@ shared.__AutoSAEController = {Destroy = destroy, Gui = gui, Reporting = FusionMo
   Report=FusionModules.Reporting,
   SetRuntime=function(runtime)FusionModules.AdminRuntime=runtime end,
   Ready=function()return ready and not destroyed end,
+  TraceSafe=isSafe,
+  TestMoveFarthest=function(valid,settings)
+   local character,humanoid,root=getCharacterParts()
+   assert(character and humanoid and root,"Personnage absent")
+   local target,furthest
+   for uid,record in pairs(records)do
+    local point=getRecordPosition(record)
+    if point and isTrackedFieldState(record)and not ownsEgg(uid)then
+     local distance=(point-root.Position).Magnitude
+     if not furthest or distance>furthest then target,furthest=uid,distance end
+    end
+   end
+   assert(target,"Aucun oeuf disponible sur ce serveur")
+   local tween,tweenGoal,tweenRevision
+   local originalSpeed,appliedSpeed=humanoid.WalkSpeed,nil
+   local function stopTween()
+    if tween then tween:Cancel();tween=nil end
+   end
+   local function stopWalk()
+    if not appliedSpeed then return end
+    humanoid:Move(Vector3.zero,false)
+    humanoid:MoveTo(root.Position)
+    if humanoid.WalkSpeed==appliedSpeed then humanoid.WalkSpeed=originalSpeed end
+    appliedSpeed=nil
+   end
+   humanoid:Move(Vector3.zero,false)
+   humanoid.Jump=false
+   local ok,result=pcall(function()
+    while valid()and character.Parent and root.Parent and humanoid.Health>0 do
+     local record=records[target]
+     local point=getRecordPosition(record)
+     assert(record and point and isTrackedFieldState(record),"L'oeuf cible a disparu")
+     local destination=point+Vector3.new(0,humanoid.HipHeight+root.Size.Y/2,0)
+     local delta=destination-root.Position
+     local mode=settings.mode or "teleport"
+     if delta.Magnitude<=(mode=="teleport"and settings.stepStuds or 1)then
+      if mode=="teleport"then root.CFrame=root.CFrame+delta end
+      return "Test · arrivé à l'oeuf "..tostring(target)
+     end
+     if mode=="walk"then
+      stopTween()
+      if not appliedSpeed then originalSpeed=humanoid.WalkSpeed end
+      appliedSpeed=settings.walkSpeed;humanoid.WalkSpeed=appliedSpeed
+      humanoid:MoveTo(destination)
+      task.wait(.05)
+     elseif mode=="tween"then
+      stopWalk()
+      root.AssemblyLinearVelocity=Vector3.zero
+      if not tween or tweenRevision~=settings.revision or (tweenGoal-destination).Magnitude>.5 or tween.PlaybackState~=Enum.PlaybackState.Playing then
+       stopTween();tweenGoal=destination;tweenRevision=settings.revision
+       tween=game:GetService("TweenService"):Create(root,TweenInfo.new(delta.Magnitude/settings.tweenSpeed,Enum.EasingStyle.Linear),{CFrame=CFrame.new(destination)*root.CFrame.Rotation})
+       tween:Play()
+      end
+      task.wait(.05)
+     else
+      stopTween();stopWalk()
+      root.AssemblyLinearVelocity=Vector3.zero
+      root.CFrame=root.CFrame+delta.Unit*settings.stepStuds
+      local movedAt=os.clock()
+      repeat
+       local remaining=settings.intervalMs/1000-(os.clock()-movedAt)
+       if remaining<=0 then break end
+       task.wait(math.min(.05,remaining))
+      until not valid()or settings.mode~="teleport"
+     end
+    end
+    return "Test · déplacement arrêté"
+   end)
+   stopTween();stopWalk()
+   if not ok then error(result,0)end
+   return result
+  end,
   GetOptions=function()return table.clone(FusionModules.Options)end,
   LowestEquippedRate=function()
    FusionModules.Helpers.RefreshAdminCollection()
@@ -6378,7 +6583,7 @@ shared.__AutoSAEController = {Destroy = destroy, Gui = gui, Reporting = FusionMo
   end,
   MoveForFishing=FusionModules.Helpers.MoveForFishing,
   FishingTravelValid=function()return not destroyed and automaticMode and autoEnabled and not queuePaused and not stopAfterFlight and not serverHopPending end,
-  FishingAutomaticValid=function()return not destroyed and automaticMode and autoEnabled and not queuePaused and not stopAfterFlight and not serverHopPending and FusionModules.Helpers.FishingMode() and not FusionModules.SlickRick.Available() and not FusionModules.StormRush.Available(true) and not FusionModules.Skyfall.Available()end,
+  FishingAutomaticValid=function()return not destroyed and automaticMode and autoEnabled and not queuePaused and not stopAfterFlight and not serverHopPending and FusionModules.Helpers.FishingMode() and not FusionModules.SlickRick.Available() and not FusionModules.TurkeyRampage.Available() and not FusionModules.StormRush.Available(true) and not FusionModules.Skyfall.Available()end,
   CanUpdateSettings=function(revision)
    local report=FusionModules.Reporting
    if type(revision)~="number" or revision>report.SettingsRevision or revision<(report.OptionsChangedRevision or 1) or not report.LastOptions then return false end
