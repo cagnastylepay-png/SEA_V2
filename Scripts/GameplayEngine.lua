@@ -4026,6 +4026,7 @@ function FusionModules.Skyfall.Run(token)
     local health=target:GetAttribute("Health")
     local deadline=os.clock()+25
     local recovering=false
+   local nextSwing=0
     while targetActive() and os.clock()<deadline do
      local remaining=target:GetAttribute("Health")
      if remaining~=health then health=remaining;deadline=os.clock()+25 end
@@ -4045,8 +4046,15 @@ function FusionModules.Skyfall.Run(token)
       recovering=false
       stopMovement(true)
       setStatus("Skyfall · frappe automatique")
+     elseif not recovering then
+      local now=os.clock()
+      local cooldown=bat:GetAttribute("CooldownEndTime")
+      if now>=nextSwing and(type(cooldown)~="number"or Workspace:GetServerTimeNow()>=cooldown)then
+       nextSwing=now+.35
+       bat:Activate()
+      end
      end
-     task.wait(CONFIG.ScanInterval)
+     task.wait(.125)
     end
     if recovering then stopMovement(true) end
    end
@@ -4206,7 +4214,7 @@ function FusionModules.TurkeyRampage.Run(token)
     local cooldown=bat:GetAttribute("CooldownEndTime")
     local now=os.clock()
     if now>=nextSwing and (type(cooldown)~="number" or Workspace:GetServerTimeNow()>=cooldown) then
-     nextSwing=now+.7
+     nextSwing=now+.35
      bat:Activate()
      setStatus("Turkey Rampage · frappe automatique")
     end
