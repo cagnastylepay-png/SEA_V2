@@ -129,12 +129,19 @@ return function(ctx)
   saveLedger();A.Signature=nil
   return true
  end
+ local function eligibleMutationRate(record,options)
+  local threshold=options.AutoEggsMin
+  if type(threshold)~="number" then return nil end
+  local item=safe(A.EggRecords.ToAssetItemData,record)
+  local rate=item and metric(safe(A.Earnings.RatePerSecond,item))
+  if rate and rate>threshold then return rate end
+ end
  function A.MutateNext()
   if A.Busy or shared.__SEAAdminRequestLock or not A.Initialized or not ctx.CanMutate()then return true end
   local options=ctx.GetOptions();if not options.AutoMutations then return false end
   local candidates={};for uid,record in pairs(ownedEggs())do
    if record.Placement and not record.Locked then
-    local item=safe(A.EggRecords.ToAssetItemData,record);local rate=item and metric(safe(A.Earnings.RatePerSecond,item))
+    local rate=eligibleMutationRate(record,options)
     if rate then table.insert(candidates,{uid=uid,record=record,rate=rate})end
    end
   end
@@ -158,6 +165,7 @@ return function(ctx)
   local options=ctx.GetOptions();if not options.AutoMutations then return false end
   if not A.Initialized then return true end
   local record=ownedEggs()[uid];if not record or not record.Placement then return false end
+  if not eligibleMutationRate(record,options) then return false end
   local stock=mutationTools()
   for _,id in ipairs(mutationIds)do
    local entry=ledger().entries[uid..":"..id]
