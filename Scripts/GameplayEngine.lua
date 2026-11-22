@@ -6669,8 +6669,8 @@ shared.__AutoSAEController = {Destroy = destroy, Gui = gui, Reporting = FusionMo
   return automaticMode
  end
 }
-connect(gui.Destroying, destroy)
-connect(script.Destroying, destroy)
+--connect(gui.Destroying, destroy)
+--connect(script.Destroying, destroy)
 -- Announce arrival before loading the gameplay modules and building inventory state.
 task.spawn(function()
  local ok,why=pcall(FusionModules.Reporting.Start)
