@@ -4259,9 +4259,9 @@ function FusionModules.TurkeyRampage.Run(token)
    setStatus(herdCharge and "Turkey Rampage · esquive charge Herd" or "Turkey Rampage · esquive "..tostring(phase))
    move(threat.Position+direction*(herdCharge and 30 or 55),{Radius=8})
    else
-    -- Keep the King target alive at every Heartbeat. Do not call move(), as
-    -- its arrival handling issues a braking MoveTo at the current position.
-    humanoid:MoveTo(targetPosition)
+    -- Refresh the King target at every Heartbeat. move() deliberately keeps
+    -- its horizontal braking once the player reaches close combat range.
+    move(targetPosition,{Radius=1.25})
     if dodging then dodging=false end
     if distanceXZ(root.Position,targetPosition)<=6 then
      local now=os.clock()
