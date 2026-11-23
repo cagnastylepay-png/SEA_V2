@@ -4087,7 +4087,7 @@ function FusionModules.Skyfall.Run(token)
      elseif not recovering then
        local now=os.clock()
        if now>=nextSwing then
-        nextSwing=now+.3
+        nextSwing=now+.1
         bat=FusionModules.BatCombat.EventStrike(character,humanoid,eventBats)
         if not bat then break end
         sky.EquippedBat=bat
@@ -4266,7 +4266,7 @@ function FusionModules.TurkeyRampage.Run(token)
     if distanceXZ(root.Position,targetPosition)<=6 then
      local now=os.clock()
      if now>=nextSwing then
-      nextSwing=now+.3
+      nextSwing=now+.1
       bat=FusionModules.BatCombat.EventStrike(character,humanoid,eventBats)
       if not bat then break end
       turkey.EquippedBat=bat
