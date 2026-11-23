@@ -2571,7 +2571,7 @@ local function activityValid(token, character)
 		and player.Character == character
 end
 
-local function moveActivity(destination, token, interruptForEgg, nextDestination, stopWithin, arrivalRadius)
+local function moveActivity(destination, token, interruptForEgg, nextDestination, stopWithin, arrivalRadius, keepMomentum)
 	local character, humanoid, root = getCharacterParts()
 	if not character or not humanoid or not root then return false, "personnage absent" end
 	local radius = arrivalRadius or 3
@@ -2623,7 +2623,7 @@ local function moveActivity(destination, token, interruptForEgg, nextDestination
 		end
 		local distance = distanceXZ(current, destination)
 		if distance <= radius then
-			move(destination, {Radius = radius})
+			if not keepMomentum then move(destination, {Radius = radius}) end
 			log("ACTIVITY_ARRIVED", "Activite=%s Distance=%.2f DureeMs=%.1f", autoActivity, distance, (now-started)*1000)
 			if typeof(nextDestination) == "Vector3" then
 				move(nextDestination, {Radius = CONFIG.PreciseArrivalRadius})
@@ -2655,7 +2655,7 @@ end
 
 
 -- Walk real waypoints; treadmill footprints are forbidden, including non-collidable triggers.
-function FusionModules.Helpers.PathMove(destination,token,interruptForEgg)
+function FusionModules.Helpers.PathMove(destination,token,interruptForEgg,smooth)
  local character,humanoid,root=getCharacterParts()
  if not root or not humanoid then return false,"personnage absent"end
  local folder=Instance.new("Folder");folder.Name="SEAPathExclusions"
@@ -2759,7 +2759,7 @@ function FusionModules.Helpers.PathMove(destination,token,interruptForEgg)
    table.insert(route,1,nodes[index]);index=parents[index]
    if not index then return false,"contournement incomplet"end
   end
-  for _,target in ipairs(route)do
+   for routeIndex,target in ipairs(route)do
    local arrived=false
    for attempt=1,3 do
     if not activityValid(token,character)then return false,"trajet annule"end
@@ -2783,16 +2783,17 @@ function FusionModules.Helpers.PathMove(destination,token,interruptForEgg)
     local currentIndex=1
     local connection=path.Blocked:Connect(function(n)if n>=currentIndex then blocked=true end end)
     local success,why=true,nil
-    for n,point in ipairs(points)do
+     for n,point in ipairs(points)do
      currentIndex=n
      if blocked then success=false;why="obstacle";break end
      if not clearSegment(root.Position,point.Position)then success=false;why="tapis sur le segment";break end
      if point.Action==Enum.PathWaypointAction.Jump then humanoid.Jump=true end
-     success,why=moveActivity(point.Position,token,interruptForEgg)
+      -- A smooth interior path keeps momentum through intermediate nodes.
+      success,why=moveActivity(point.Position,token,interruptForEgg,nil,nil,nil,smooth and (n<#points or routeIndex<#route))
      if not success then break end
     end
     connection:Disconnect();path:Destroy()
-    stopMovement(true)
+    if not smooth or routeIndex==#route then stopMovement(true) end
     if success then arrived=true;break end
     if why~="obstacle"then return false,why end
    end
@@ -5233,7 +5234,7 @@ do
   local target=Vector3.new(position.X,root.Position.Y,position.Z)
    local reached,reason
    if trade.Inside() then
-    reached,reason=FusionModules.Helpers.PathMove(target,token,true)
+    reached,reason=FusionModules.Helpers.PathMove(target,token,true,true)
     if reached and active() then reached,reason=moveActivity(target,token,true,nil,nil,1.25) end
    else
     reached,reason=moveActivity(target,token,true,nil,nil,1.25)
