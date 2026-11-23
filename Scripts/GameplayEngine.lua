@@ -5456,7 +5456,8 @@ local function idleOnTreadmill(token)
   if not home then return false,why end
   autoActivity="RETURN_SAFE"
   setStatus("Retour direct vers la zone sûre...")
-   local reached,reason=FusionModules.Helpers.PathMove(home,token,true)
+  -- We are outside the cave here: return through the flight field with MoveTo.
+  local reached,reason=moveActivity(home,token,true)
   if not reached then return reason=="nouvel oeuf",reason end
  end
 	if not PlotState or not TreadmillRemotes then return false, "modules tapis indisponibles" end
@@ -5548,7 +5549,8 @@ function FusionModules.Helpers.ReturnAfterCollectionStop(token)
   local exited,reason=leaveTreadmill(token)
   if not exited then stopAutomation("Sortie tapis : "..tostring(reason));return true end
   autoActivity="RETURN_COLLECTION_STOP"
-   local arrived,detail=FusionModules.Helpers.PathMove(destination,token,false)
+  -- Collection return begins in the gameplay/flight field, not inside a cave.
+  local arrived,detail=moveActivity(destination,token,false)
   local _,_,latest=getCharacterParts()
   if not arrived or not latest or isSafe(latest.Position)~=true then stopAutomation("Retour safe non confirme : "..tostring(detail));return true end
  end
