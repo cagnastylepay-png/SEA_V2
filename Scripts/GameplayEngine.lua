@@ -4118,7 +4118,7 @@ end
 
 -- Turkey Rampage is rendered from an authoritative leg/state packet.  We only
 -- use the same tagged hitbox and native Tool activation as the game client.
-FusionModules.TurkeyRampage={RetryAt=0,NextStateAt=0,State=nil,Root=nil,Tags=game:GetService("CollectionService")}
+FusionModules.TurkeyRampage={RetryAt=0,NextStateAt=0,NextMutationBuyAt=0,State=nil,Root=nil,Tags=game:GetService("CollectionService")}
 
 function FusionModules.TurkeyRampage.Bind(remotes)
  local turkey=FusionModules.TurkeyRampage
@@ -4156,6 +4156,30 @@ function FusionModules.TurkeyRampage.Available()
   or os.clock()<turkey.RetryAt or not turkey.Util or not turkey.Util.Live() then return nil end
  local state,root=turkey.Refresh()
  if state and root then return state,root end
+end
+
+-- TurkeyShopUI exposes this exact offer as MapleMutation. It is the only
+-- Turkey shop purchase automation is permitted to request: no boosts, skins,
+-- or pets are ever sent to AskBuy.
+function FusionModules.TurkeyRampage.BuyMutation()
+ local turkey=FusionModules.TurkeyRampage
+ if not turkey.Remotes or not turkey.Util or os.clock()<turkey.NextMutationBuyAt then return false end
+ local profile=Save and Save.Peek()
+ local priceOK,price=pcall(turkey.Util.ShopPrice,"MutationConsumable")
+ local feathers=profile and profile.TurkeyFeathers
+ if not priceOK or type(price)~="number" or price<=0 or type(feathers)~="number" or feathers<price then return false end
+ turkey.NextMutationBuyAt=os.clock()+.45
+ local replied,bought,message=pcall(function()
+  return turkey.Remotes.AskBuy:InvokeServer("MutationConsumable")
+ end)
+ if replied and bought==true then
+  log("ACTION","Turkey Shop : Maple Mutation achetée pour %s plumes",formatNumber(price))
+  return true
+ end
+ -- Do not retry a rejected request every frame; feather replication can lag.
+ turkey.NextMutationBuyAt=os.clock()+3
+ log("ACTION","Turkey Shop : Maple Mutation non achetée : %s",tostring(replied and message or bought))
+ return false
 end
 
 -- Herd proxies are only read to avoid a telegraphed charge; combat movement
@@ -4217,6 +4241,7 @@ function FusionModules.TurkeyRampage.Run(token)
  while targetActive()do
   state,boss=turkey.Available()
   if not state or not boss then break end
+   turkey.BuyMutation()
   local phase=state.Phase
   local herd=turkey.HerdTarget(root.Position)
    local targetPosition=boss.Position
