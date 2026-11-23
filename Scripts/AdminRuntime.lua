@@ -47,20 +47,34 @@ return function(ctx)
   return saved and A.Items.Decode(saved),saved
  end
  local mutationIds={"Boss","Scrambled","Enchanted","Nitro","Spectral","Musical","Alien","DarkMatter","Blacklisted","Copper","Thunderous","GreatBloom","Maple"}
+ -- The newer mutation items are not all stamped identically on their Tool.
+ -- Keep the server's MutationId authoritative when present, but also recognise
+ -- its ItemId/Tool naming convention so a valid consumable is never hidden.
+ local mutationItemIds={
+  Boss="Boss",Scrambled="Scrambled",Enchanted="Enchanted",Nitro="Nitro",Spectral="Spectral",Musical="Musical",Alien="Alien",DarkMatter="DarkMatter",
+  BlacklistedMutation="Blacklisted",CopperMutation="Copper",ThunderousMutation="Thunderous",
+  SpiritBloomMutation="GreatBloom",MapleMutation="Maple",
+ }
  local waitUntil
  local function hasMutation(record,id)return record.BaseMutation==id or table.find(record.Mutations or{},id)~=nil end
  local function mutationTools()
   local rows={};local seen={};for _,id in ipairs(mutationIds)do rows[id]={id=id,count=0,tools={}}end
   for _,container in pairs({player:FindFirstChild("Backpack"),player.Character})do
    if container then for _,tool in ipairs(container:GetChildren())do
-    if not seen[tool]and tool:IsA("Tool")and tool:GetAttribute("ItemType")=="MutationConsumable"then
+    local itemId=tool:IsA("Tool")and(tool:GetAttribute("ItemId")or tool:GetAttribute("Id")or tool.Name)
+    local tagged=tool:IsA("Tool")and tool:GetAttribute("ItemType")=="MutationConsumable"
+    local mutationId=tool:IsA("Tool")and(tool:GetAttribute("MutationId")or mutationItemIds[itemId])
+    if not mutationId and type(itemId)=="string"and itemId:sub(-8)=="Mutation"then mutationId=itemId:sub(1,-9)end
+    if not seen[tool]and tool:IsA("Tool")and(tagged or type(mutationId)=="string")then
      seen[tool]=true
-     local id=tool:GetAttribute("MutationId")or"Boss"
+     local id=mutationId or "Boss"
      if type(id)=="string"and#id>0 and#id<=100 then
       local r=rows[id]
       if not r then r={id=id,count=0,tools={}};rows[id]=r end
-      local uses=metric(tool:GetAttribute("Uses"))
-      if uses and uses>=1 then r.count+=math.floor(uses);table.insert(r.tools,tool)end
+      -- Legacy tools use Uses. Current one-shot consumables can omit it, in
+      -- which case the equipped Tool itself represents one available use.
+      local uses=metric(tool:GetAttribute("Uses"))or metric(tool:GetAttribute("Count"))or metric(tool:GetAttribute("Quantity"))or 1
+      if uses>=1 then r.count+=math.floor(uses);table.insert(r.tools,tool)end
      end
     end
    end end
