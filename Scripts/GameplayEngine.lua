@@ -4262,18 +4262,21 @@ function FusionModules.TurkeyRampage.Run(token)
    setStatus(herdCharge and "Turkey Rampage · esquive charge Herd" or "Turkey Rampage · esquive "..tostring(phase))
    move(threat.Position+direction*(herdCharge and 30 or 55),{Radius=8})
    else
-    -- Refresh the King target at every Heartbeat. move() deliberately keeps
-    -- its horizontal braking once the player reaches close combat range.
-    move(targetPosition,{Radius=1.25})
     -- After the safe-zone trajectory, converge on the live King CFrame in
     -- direct segments of at most 25 studs. This includes Y and rotation so
     -- the final player CFrame is exactly the King's, rather than a stale
     -- horizontal approximation beside it.
     local kingDistance=(root.Position-targetPosition).Magnitude
-    if kingDistance>.05
+    if kingDistance>CONFIG.TurkeySnapDistance then
+     move(targetPosition,{Radius=1.25})
+    elseif kingDistance>.05
      and not motionBlockReason({character=character})then
      root.AssemblyLinearVelocity=Vector3.zero
      root.CFrame=root.CFrame:Lerp(boss,math.min(1,CONFIG.TurkeySnapDistance/kingDistance))
+    else
+     -- No residual MoveTo is allowed to pull the character away while the
+     -- King is stationary.  Only the explicit dangerous branch may unpin it.
+     stopMovement(true)
     end
     if dodging then dodging=false end
     if distanceXZ(root.Position,targetPosition)<=6 then
