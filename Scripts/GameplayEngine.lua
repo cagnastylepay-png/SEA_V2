@@ -4239,6 +4239,7 @@ function FusionModules.TurkeyRampage.Run(token)
   local nextFollow=0
   local eventBats={}
   local dodging=false
+  local followingKing=false
  while targetActive()do
   state,boss=turkey.Available()
   if not state or not boss then break end
@@ -4257,19 +4258,26 @@ function FusionModules.TurkeyRampage.Run(token)
    setStatus(herdCharge and "Turkey Rampage · esquive charge Herd" or "Turkey Rampage · esquive "..tostring(phase))
    move(threat.Position+direction*(herdCharge and 30 or 55),{Radius=8})
    else
-    -- After the safe-zone trajectory, converge on the live King CFrame in
-    -- direct segments of at most 25 studs. This includes Y and rotation so
-    -- the final player CFrame is exactly the King's, rather than a stale
-    -- horizontal approximation beside it.
+    -- MoveTo handles only the final 25-stud approach. Once there, the live
+    -- King CFrame (including Y and rotation) is the exact follow position.
     local kingDistance=(root.Position-targetPosition).Magnitude
-    if os.clock()>=nextFollow and not motionBlockReason({character=character})then
+    if not followingKing and kingDistance>CONFIG.TurkeySnapDistance then
+     -- The approach is regular native MoveTo.  Never use direct placement
+     -- before the character is close enough to the live King.
+     move(targetPosition,{Radius=CONFIG.TurkeySnapDistance})
+    elseif not motionBlockReason({character=character})then
+     followingKing=true
+     if os.clock()<nextFollow then
+      -- Keep the native walk cancelled between two 50 ms CFrame refreshes.
+      stopMovement(true)
+     else
      nextFollow=os.clock()+CONFIG.EventBatInterval
-     -- Follow the actual King CFrame, not an offset MoveTo target.  Each
-     -- physical correction advances by at most 25 studs and the last one is
-     -- the exact boss CFrame.
+     -- From now on, pin the complete rig to the live King CFrame. The root
+     -- position is therefore at zero studs from the King until an evade.
      stopMovement(true)
      root.AssemblyLinearVelocity=Vector3.zero
-     character:PivotTo(root.CFrame:Lerp(boss,math.min(1,CONFIG.TurkeySnapDistance/math.max(kingDistance,.05))))
+     character:PivotTo(boss)
+     end
     end
     if dodging then dodging=false end
     if distanceXZ(root.Position,targetPosition)<=6 then
