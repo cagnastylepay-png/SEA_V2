@@ -1950,6 +1950,45 @@ function FusionModules.BatCombat.FindBest(character,backpack)
  end
  return best,bestName
 end
+-- Event targets can reject a Tool while its previous swing is cooling down.
+-- Cycle the actual owned bats, strongest first, and equip the next one before
+-- every native activation. This remains distinct from egg combat.
+function FusionModules.BatCombat.NextEventBat(character,backpack,eventState)
+ local state=FusionModules.BatCombat
+ if not state.Directory then return nil end
+ local bats={}
+ for _,container in ipairs({character,backpack}) do
+  if container then for _,tool in ipairs(container:GetChildren()) do
+   if tool:IsA("Tool") then
+    local name=tool:GetAttribute("GearName")
+    local data=type(name)=="string" and state.Directory[name] and state.Directory[name].BatControllerData
+    if type(data)=="table" and type(data.Force)=="number" and type(data.RangeBonus)=="number" and type(data.Duration)=="number" then table.insert(bats,{Tool=tool,Name=name,Data=data}) end
+   end
+  end end
+ end
+ table.sort(bats,function(a,b)
+  local x,y=a.Data,b.Data
+  if x.Force~=y.Force then return x.Force>y.Force end
+  if x.RangeBonus~=y.RangeBonus then return x.RangeBonus>y.RangeBonus end
+  if x.Duration~=y.Duration then return x.Duration>y.Duration end
+  return a.Name<b.Name
+ end)
+ if #bats==0 then return nil end
+ eventState.Cursor=(eventState.Cursor or 0)%#bats+1
+ return bats[eventState.Cursor].Tool,bats[eventState.Cursor].Name
+end
+function FusionModules.BatCombat.EventStrike(character,humanoid,eventState)
+ local backpack=player:FindFirstChildOfClass("Backpack")
+ local previous=eventState.Tool
+ local bat,name=FusionModules.BatCombat.NextEventBat(character,backpack,eventState)
+ if not bat then return nil,false end
+ if previous and previous~=bat and previous.Parent==character and backpack then previous.Parent=backpack end
+ humanoid:EquipTool(bat) -- mandatory re-equip on every 300 ms event cycle
+ if bat.Parent~=character then return bat,false end
+ bat:Activate()
+ eventState.Tool,eventState.Name=bat,name
+ return bat,true
+end
 function FusionModules.BatCombat.Step()
  local state=FusionModules.BatCombat
  local ctx=currentCycle
@@ -4026,15 +4065,11 @@ function FusionModules.Skyfall.Run(token)
     local health=target:GetAttribute("Health")
     local deadline=os.clock()+25
     local recovering=false
-   local nextSwing=0
+    local nextSwing=0
+    local eventBats={}
     while targetActive() and os.clock()<deadline do
      local remaining=target:GetAttribute("Health")
      if remaining~=health then health=remaining;deadline=os.clock()+25 end
-     if bat.Parent~=character then
-      if not bat.Parent then break end
-      humanoid:EquipTool(bat)
-      sky.EquippedBat=bat
-     end
      local distance=distanceXZ(root.Position,target.Position)
      if distance>6 or (recovering and distance>3) then
       if not recovering then setStatus("Skyfall · retour vers le même rocher") end
@@ -4047,11 +4082,12 @@ function FusionModules.Skyfall.Run(token)
       stopMovement(true)
       setStatus("Skyfall · frappe automatique")
      elseif not recovering then
-      local now=os.clock()
-      local cooldown=bat:GetAttribute("CooldownEndTime")
-      if now>=nextSwing and(type(cooldown)~="number"or Workspace:GetServerTimeNow()>=cooldown)then
-       nextSwing=now+.35
-       bat:Activate()
+       local now=os.clock()
+       if now>=nextSwing then
+        nextSwing=now+.3
+        bat=FusionModules.BatCombat.EventStrike(character,humanoid,eventBats)
+        if not bat then break end
+        sky.EquippedBat=bat
       end
      end
      task.wait(.125)
@@ -4122,8 +4158,8 @@ function FusionModules.TurkeyRampage.Available()
  if state and root then return state,root end
 end
 
--- The Herd is made of the small turkeys.  Their game-created proxies are
--- tagged BatAutoSwing and expose health, so they are preferred for feathers.
+-- Herd proxies are only read to avoid a telegraphed charge; combat movement
+-- never targets them.
 function FusionModules.TurkeyRampage.HerdTarget(position)
  local turkey=FusionModules.TurkeyRampage
  local best,bestDistance
@@ -4175,21 +4211,15 @@ function FusionModules.TurkeyRampage.Run(token)
  local bat=FusionModules.BatCombat.FindBest(character,player:FindFirstChildOfClass("Backpack"))
  if not bat then error("Turkey Rampage : aucune batte disponible",0)end
  turkey.EquippedBat=bat
- local nextSwing=0
- local dodging=false
- local lastTarget
+  local nextSwing=0
+  local eventBats={}
+  local dodging=false
  while targetActive()do
   state,boss=turkey.Available()
   if not state or not boss then break end
-  if bat.Parent~=character then
-   if not bat.Parent then break end
-   humanoid:EquipTool(bat)
-  end
   local phase=state.Phase
   local herd=turkey.HerdTarget(root.Position)
-  local target=herd or boss
-  local targetPosition=target.Position
-  if target~=lastTarget then stopMovement(true);lastTarget=target end
+   local targetPosition=boss.Position
   local threat=herd and turkey.HerdCharging() and herd or boss
   local delta=root.Position-threat.Position
   local horizontal=Vector3.new(delta.X,0,delta.Z)
@@ -4202,20 +4232,20 @@ function FusionModules.TurkeyRampage.Run(token)
    move(threat.Position+direction*(herdCharge and 30 or 55),{Radius=8})
   else
    local distance=distanceXZ(root.Position,targetPosition)
-   if distance>6 then
-    if herd then setStatus("Turkey Rampage · petits boss prioritaires")
-    elseif dodging then setStatus("Turkey Rampage · retour sur le boss")else setStatus("Turkey Rampage · suivi du boss")end
+    if distance>1.25 then
+     if dodging then setStatus("Turkey Rampage · retour sur le boss")else setStatus("Turkey Rampage · suivi rapproché du King")end
     dodging=false
     local followDirection=distanceXZ(root.Position,targetPosition)>.1 and Vector3.new(root.Position.X-targetPosition.X,0,root.Position.Z-targetPosition.Z).Unit or Vector3.new(1,0,0)
-    move(targetPosition-followDirection*4,{Radius=4})
+     move(targetPosition-followDirection*.35,{Radius=1.25})
    else
     if dodging then dodging=false end
     stopMovement(true)
-    local cooldown=bat:GetAttribute("CooldownEndTime")
     local now=os.clock()
-    if now>=nextSwing and (type(cooldown)~="number" or Workspace:GetServerTimeNow()>=cooldown) then
-     nextSwing=now+.35
-     bat:Activate()
+     if now>=nextSwing then
+      nextSwing=now+.3
+      bat=FusionModules.BatCombat.EventStrike(character,humanoid,eventBats)
+      if not bat then break end
+      turkey.EquippedBat=bat
      setStatus("Turkey Rampage · frappe automatique")
     end
    end
@@ -4355,7 +4385,11 @@ do
   local flat=(root.Position-point)*Vector3.new(1,0,1)
   local offset=flat.Magnitude>0 and flat.Unit*math.min(2,reach*.25) or Vector3.zero
   rush.MoveValid=valid
-  moveActivity(point+offset,token,false)
+   if rush.Inside() then
+    FusionModules.Helpers.PathMove(point+offset,token,false)
+   else
+    moveActivity(point+offset,token,false)
+   end
   rush.MoveValid=nil
   return valid() and (root.Position-point).Magnitude<=reach
  end
@@ -4634,8 +4668,8 @@ do
     local offset=direction*math.min(nativeReach*.5,6)
     local destination=Vector3.new(point.X,root.Position.Y,point.Z)+offset
     FusionModules.Helpers.PathMove(destination,token,true)
-   elseif not withinApproach(root.Position) then
-    moveActivity(point,token,true,nil,withinApproach)
+    elseif not withinApproach(root.Position) then
+     FusionModules.Helpers.PathMove(point,token,true)
    end
    rush.MoveValid=nil
    if changed() then return true end
@@ -5171,7 +5205,13 @@ do
   local _,_,root=getCharacterParts()
   if not root or not position or not active() then return false,"position du prompt indisponible" end
   local target=Vector3.new(position.X,root.Position.Y,position.Z)
-  local reached,reason=moveActivity(target,token,true,nil,nil,1.25)
+   local reached,reason
+   if trade.Inside() then
+    reached,reason=FusionModules.Helpers.PathMove(target,token,true)
+    if reached and active() then reached,reason=moveActivity(target,token,true,nil,nil,1.25) end
+   else
+    reached,reason=moveActivity(target,token,true,nil,nil,1.25)
+   end
   if not reached then return false,reason end
   stopMovement(true)
   RunService.Heartbeat:Wait()
@@ -5416,7 +5456,7 @@ local function idleOnTreadmill(token)
   if not home then return false,why end
   autoActivity="RETURN_SAFE"
   setStatus("Retour direct vers la zone sûre...")
-  local reached,reason=moveActivity(home,token,true)
+   local reached,reason=FusionModules.Helpers.PathMove(home,token,true)
   if not reached then return reason=="nouvel oeuf",reason end
  end
 	if not PlotState or not TreadmillRemotes then return false, "modules tapis indisponibles" end
@@ -5508,7 +5548,7 @@ function FusionModules.Helpers.ReturnAfterCollectionStop(token)
   local exited,reason=leaveTreadmill(token)
   if not exited then stopAutomation("Sortie tapis : "..tostring(reason));return true end
   autoActivity="RETURN_COLLECTION_STOP"
-  local arrived,detail=moveActivity(destination,token,false)
+   local arrived,detail=FusionModules.Helpers.PathMove(destination,token,false)
   local _,_,latest=getCharacterParts()
   if not arrived or not latest or isSafe(latest.Position)~=true then stopAutomation("Retour safe non confirme : "..tostring(detail));return true end
  end
