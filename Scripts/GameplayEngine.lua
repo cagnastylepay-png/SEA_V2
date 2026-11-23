@@ -5233,7 +5233,9 @@ do
   local character,humanoid,root=getCharacterParts()
   if not exit or not humanoid or not root then return false end
   autoActivity="BUTTERFLY_TRADE"
-  moveActivity(exit.Position,token,false)
+  -- This leg is inside the Enchanted Tree; use the interior navmesh only
+  -- until its native exit confirms the player is back in the flight field.
+  FusionModules.Helpers.PathMove(exit.Position,token,false)
   if not activityValid(token,character) then return false end
   humanoid:MoveTo(exit.Position)
   return waitFor(function()return not trade.Inside()end,8,function()return activityValid(token,character)end)
