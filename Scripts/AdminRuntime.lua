@@ -55,16 +55,28 @@ return function(ctx)
    if container then for _,tool in ipairs(container:GetChildren())do
     if not seen[tool]and tool:IsA("Tool")and tool:GetAttribute("ItemType")=="MutationConsumable"then
      seen[tool]=true
-     local id=tool:GetAttribute("MutationId")or"Boss";local r=rows[id];local uses=metric(tool:GetAttribute("Uses"))
-     if r and uses and uses>=1 then r.count+=math.floor(uses);table.insert(r.tools,tool)end
+     local id=tool:GetAttribute("MutationId")or"Boss"
+     if type(id)=="string"and#id>0 and#id<=100 then
+      local r=rows[id]
+      if not r then r={id=id,count=0,tools={}};rows[id]=r end
+      local uses=metric(tool:GetAttribute("Uses"))
+      if uses and uses>=1 then r.count+=math.floor(uses);table.insert(r.tools,tool)end
+     end
     end
    end end
   end
   return rows
  end
+ local function mutationStockIds(stock)
+  local ids,seen={},{}
+  for _,id in ipairs(mutationIds)do table.insert(ids,id);seen[id]=true end
+  local extra={};for id in pairs(stock)do if not seen[id]then table.insert(extra,id)end end
+  table.sort(extra);for _,id in ipairs(extra)do table.insert(ids,id)end
+  return ids
+ end
  local function mutationMetadata()
   local result={};local stock=mutationTools()
-  for _,id in ipairs(mutationIds)do
+  for _,id in ipairs(mutationStockIds(stock))do
    local spec=A.MutationCatalog[id]or{};local source=A.MutationFlags[id]
    local chance=id=="Enchanted"and 100 or(source and safe(function()return source:Get()end))
    table.insert(result,{id=id,name=spec.Label or id,count=stock[id].count,successPercent=metric(chance),multiplier=metric(spec.EarningsScalar)})
@@ -78,7 +90,7 @@ return function(ctx)
  end
  local function mutationPriority(stock)
   local ids={}
-  for _,id in ipairs(mutationIds)do if stock[id]and stock[id].count>0 then table.insert(ids,id)end end
+  for _,id in ipairs(mutationStockIds(stock))do if stock[id]and stock[id].count>0 then table.insert(ids,id)end end
   table.sort(ids,function(a,b)
    local ap,bp=mutationSuccessPercent(a),mutationSuccessPercent(b)
    if ap~=bp then return ap>bp end
@@ -192,6 +204,18 @@ return function(ctx)
  end
  local function catalogImage(category,config)
   return{category=category,name=config.DisplayName or category,eggImageAssetId=config.Egg and imageId(config.Egg.Icon),animalImageAssetId=imageId(config.Icon)}
+ end
+ local function collectImageCatalog()
+  local images={}
+  for category,config in pairs(A.Assets.Directory)do
+   if type(category)=="string"and type(config)=="table"then
+    local entry=catalogImage(category,config)
+    if entry.eggImageAssetId or entry.animalImageAssetId then table.insert(images,entry)end
+   end
+  end
+  assert(#images<=5000,"Catalogue trop volumineux")
+  table.sort(images,function(a,b)return a.category<b.category end)
+  return images
  end
  local function row(uid,item,location,isEgg,record)
   local category=isEgg and record.AssetCategory or item.Category
@@ -792,10 +816,7 @@ return function(ctx)
    assert(A.Trajectory,"Aucune capture disponible")
    stopTrajectory("manual");return true
   elseif m.action=="images.collect"then
-   local images={};for category,config in pairs(A.Assets.Directory)do
-    if type(category)=="string"and type(config)=="table"then local entry=catalogImage(category,config);if entry.eggImageAssetId or entry.animalImageAssetId then table.insert(images,entry)end end
-   end
-   assert(#images<=5000,"Catalogue trop volumineux");table.sort(images,function(a,b)return a.category<b.category end);A.ImageCatalog=images;A.Signature=nil;return true
+   A.ImageCatalog=collectImageCatalog();A.Signature=nil;return true
   elseif m.action=="settings.update"then
    assert(m.settingsSessionId==nil or ctx.Report.SessionId==m.settingsSessionId,"La session des paramètres a changé")
    assert((ctx.CanUpdateSettings and ctx.CanUpdateSettings(m.settingsRevision))or(not ctx.CanUpdateSettings and ctx.Report.SettingsRevision==m.settingsRevision),"Parametres modifies dans le jeu")
@@ -886,6 +907,7 @@ return function(ctx)
    A.Constants=module("Shared.Globals.Constants");A.Roster=module("Client.AssetRoster");A.Plot=module("Client.PlotState")
    A.Speed=module("Client.SpeedPowerProjection");A.Remotes=module("Shared.Remotes");A.Renderer=module("Shared.Eggs.PlacedEggRenderer")
    A.Kernel=module("Shared.Util.FuseKernel");A.Signals=module("Client.FuseMachineSignals");A.FuseTypes=module("Shared.Types.FuseMachine")
+   A.ImageCatalog=collectImageCatalog()
    A.MutationCatalog=module("Shared.Modules.Mutations.Catalog");A.MutationFlags={}
    for id,spec in pairs({Boss={"Shared.Flags.BossMasteryFlags","MutationConsumableSuccessPercent"},Scrambled={"Shared.Flags.ScrambleMutationFlags","SuccessPercent"},Nitro={"Shared.Flags.RaceRallyFlags","NitroSuccessPercent"},Spectral={"Shared.Flags.TrainEventFlags","SpectralSuccessPercent"},Musical={"Shared.Flags.BossMasteryFlags","MusicalMutationSuccessPercent"},Alien={"Shared.Flags.UFOSightingsFlags","AlienMutationSuccessPercent"},DarkMatter={"Shared.Flags.AlienLagoonFlags","DarkMatterMutationSuccessPercent"},Blacklisted={"Shared.Flags.ItemFlags","BlacklistedMutationSuccessPercent"},Copper={"Shared.Flags.ItemFlags","CopperMutationSuccessPercent"},Thunderous={"Shared.Flags.ItemFlags","ThunderousMutationSuccessPercent"},GreatBloom={"Shared.Flags.ItemFlags","SpiritBloomMutationSuccessPercent"},Maple={"Shared.Flags.ItemFlags","MapleMutationSuccessPercent"}})do
     local flags=safe(module,spec[1]);A.MutationFlags[id]=flags and flags[spec[2]]

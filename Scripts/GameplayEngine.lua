@@ -4071,7 +4071,6 @@ function FusionModules.Skyfall.Run(token)
     local health=target:GetAttribute("Health")
     local deadline=os.clock()+25
     local recovering=false
-    local nextSwing=0
     local eventBats={}
     while targetActive() and os.clock()<deadline do
      local remaining=target:GetAttribute("Health")
@@ -4087,16 +4086,12 @@ function FusionModules.Skyfall.Run(token)
       recovering=false
       stopMovement(true)
       setStatus("Skyfall · frappe automatique")
-     elseif not recovering then
-       local now=os.clock()
-       if now>=nextSwing then
-        nextSwing=now+CONFIG.EventBatInterval
-        bat=FusionModules.BatCombat.EventStrike(character,humanoid,eventBats)
-        if not bat then break end
-        sky.EquippedBat=bat
-      end
+    elseif not recovering then
+      bat=FusionModules.BatCombat.EventStrike(character,humanoid,eventBats)
+      if not bat then break end
+      sky.EquippedBat=bat
      end
-     task.wait(.125)
+     RunService.Heartbeat:Wait()
     end
     if recovering then stopMovement(true) end
    end
@@ -4241,7 +4236,6 @@ function FusionModules.TurkeyRampage.Run(token)
  local bat=FusionModules.BatCombat.FindBest(character,player:FindFirstChildOfClass("Backpack"))
  if not bat then error("Turkey Rampage : aucune batte disponible",0)end
  turkey.EquippedBat=bat
-  local nextSwing=0
   local nextFollow=0
   local eventBats={}
   local dodging=false
@@ -4268,27 +4262,21 @@ function FusionModules.TurkeyRampage.Run(token)
     -- the final player CFrame is exactly the King's, rather than a stale
     -- horizontal approximation beside it.
     local kingDistance=(root.Position-targetPosition).Magnitude
-    if kingDistance>CONFIG.TurkeySnapDistance then
-     move(targetPosition,{Radius=1.25})
-    elseif os.clock()>=nextFollow and not motionBlockReason({character=character})then
+    if os.clock()>=nextFollow and not motionBlockReason({character=character})then
      nextFollow=os.clock()+CONFIG.EventBatInterval
-     -- Cancel residual walking, then refresh the exact live CFrame every
-     -- 50 ms. A target that moved over 25 studs is approached in bounded
-     -- direct segments; the final segment is the King's exact CFrame.
+     -- Follow the actual King CFrame, not an offset MoveTo target.  Each
+     -- physical correction advances by at most 25 studs and the last one is
+     -- the exact boss CFrame.
      stopMovement(true)
      root.AssemblyLinearVelocity=Vector3.zero
-     root.CFrame=root.CFrame:Lerp(boss,math.min(1,CONFIG.TurkeySnapDistance/math.max(kingDistance,.05)))
+     character:PivotTo(root.CFrame:Lerp(boss,math.min(1,CONFIG.TurkeySnapDistance/math.max(kingDistance,.05))))
     end
     if dodging then dodging=false end
     if distanceXZ(root.Position,targetPosition)<=6 then
-     local now=os.clock()
-     if now>=nextSwing then
-      nextSwing=now+CONFIG.EventBatInterval
-      bat=FusionModules.BatCombat.EventStrike(character,humanoid,eventBats)
-      if not bat then break end
-      turkey.EquippedBat=bat
-      setStatus("Turkey Rampage · frappe automatique")
-     end
+     bat=FusionModules.BatCombat.EventStrike(character,humanoid,eventBats)
+     if not bat then break end
+     turkey.EquippedBat=bat
+     setStatus("Turkey Rampage · frappe automatique")
     else
      setStatus("Turkey Rampage · suivi rapproché du King")
     end
