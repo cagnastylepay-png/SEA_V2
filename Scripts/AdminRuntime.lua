@@ -179,7 +179,7 @@ return function(ctx)
   end
   table.sort(candidates,function(a,b)return a.rate>b.rate end)
   local stock=mutationTools()
-  -- Auto Mutations applies every owned consumable.  The order is deterministic:
+  -- Auto Mutations applies only selected consumables.  The order is deterministic:
   -- all 100% mutations before lower chances, then the most valuable egg first.
   for _,candidate in ipairs(candidates)do for _,id in ipairs(mutationPriority(stock))do
    local prefix="Mutation"..id;local entry=ledger().entries[candidate.uid..":"..id]
@@ -187,7 +187,7 @@ return function(ctx)
    -- actually available.  A single failed 10% roll must not permanently
    -- prevent Fractured/Nitro from reaching an otherwise eligible egg.
    local attempts=math.max(options[prefix.."Attempts"]or 1,stock[id].count)
-   if stock[id].count>0 and not hasMutation(candidate.record,id)
+   if options[prefix.."Enabled"]==true and stock[id].count>0 and not hasMutation(candidate.record,id)
     and(not entry or not entry.blocked and entry.count<attempts)then
     if os.clock()<(A.NextMutationAt or 0)then return true end
     A.NextMutationAt=os.clock()+2
@@ -208,8 +208,8 @@ return function(ctx)
   local stock=mutationTools()
   for _,id in ipairs(mutationPriority(stock))do
    local prefix="Mutation"..id;local entry=ledger().entries[uid..":"..id]
-   local attempts=options[prefix.."Attempts"]or 1
-   if stock[id].count>0 and not hasMutation(record,id)and(not entry or not entry.blocked and entry.count<attempts)then return true end
+   local attempts=math.max(options[prefix.."Attempts"]or 1,stock[id].count)
+   if options[prefix.."Enabled"]==true and stock[id].count>0 and not hasMutation(record,id)and(not entry or not entry.blocked and entry.count<attempts)then return true end
   end
   return false
  end
