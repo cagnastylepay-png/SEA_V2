@@ -1982,8 +1982,11 @@ function FusionModules.BatCombat.EventStrike(character,humanoid,eventState)
  local previous=eventState.Tool
  local bat,name=FusionModules.BatCombat.NextEventBat(character,backpack,eventState)
  if not bat then return nil,false end
- if previous and previous~=bat and previous.Parent==character and backpack then previous.Parent=backpack end
- humanoid:EquipTool(bat) -- mandatory re-equip on every 300 ms event cycle
+ -- Force a full unequip/equip even if the cycle contains one bat. EquipTool on
+ -- an already-held Tool is a no-op, which previously hid the 300 ms rotation.
+ if previous and previous.Parent==character and backpack then previous.Parent=backpack end
+ if bat.Parent==character and backpack then bat.Parent=backpack end
+ humanoid:EquipTool(bat)
  if bat.Parent~=character then return bat,false end
  bat:Activate()
  eventState.Tool,eventState.Name=bat,name
@@ -4255,27 +4258,25 @@ function FusionModules.TurkeyRampage.Run(token)
    if not dodging then stopMovement(true);dodging=true end
    setStatus(herdCharge and "Turkey Rampage · esquive charge Herd" or "Turkey Rampage · esquive "..tostring(phase))
    move(threat.Position+direction*(herdCharge and 30 or 55),{Radius=8})
-  else
-   local distance=distanceXZ(root.Position,targetPosition)
-    if distance>1.25 then
-     if dodging then setStatus("Turkey Rampage · retour sur le boss")else setStatus("Turkey Rampage · suivi rapproché du King")end
-    dodging=false
-    local followDirection=distanceXZ(root.Position,targetPosition)>.1 and Vector3.new(root.Position.X-targetPosition.X,0,root.Position.Z-targetPosition.Z).Unit or Vector3.new(1,0,0)
-     move(targetPosition-followDirection*.35,{Radius=1.25})
    else
+    -- Keep the King target alive at every Heartbeat. Do not call move(), as
+    -- its arrival handling issues a braking MoveTo at the current position.
+    humanoid:MoveTo(targetPosition)
     if dodging then dodging=false end
-    stopMovement(true)
-    local now=os.clock()
+    if distanceXZ(root.Position,targetPosition)<=6 then
+     local now=os.clock()
      if now>=nextSwing then
       nextSwing=now+.3
       bat=FusionModules.BatCombat.EventStrike(character,humanoid,eventBats)
       if not bat then break end
       turkey.EquippedBat=bat
-     setStatus("Turkey Rampage · frappe automatique")
+      setStatus("Turkey Rampage · frappe automatique")
+     end
+    else
+     setStatus("Turkey Rampage · suivi rapproché du King")
     end
-   end
   end
-  task.wait(.05)
+   RunService.Heartbeat:Wait()
  end
  turkey.MoveValid=nil
 end
