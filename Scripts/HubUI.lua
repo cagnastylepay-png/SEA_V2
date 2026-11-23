@@ -171,10 +171,8 @@ return function(engine,runtime)
   make('UIListLayout','Layout',list,{Padding=UDim.new(0,12),SortOrder=Enum.SortOrder.LayoutOrder})
   local specs=groups[category]
   if category=='AutoMutations'then
-   specs={{'AutoMutations','Mutations automatiques • œufs placés'}}
+   specs={{'AutoMutations','Mutations automatiques • œufs placés au-dessus du seuil de vol'}}
    for _,m in ipairs(data.mutationConsumables or{})do local prefix='Mutation'..m.id
-    table.insert(specs,{prefix..'Enabled',m.name..' • activer'})
-    table.insert(specs,{prefix..'Min',m.name..' • revenu strictement supérieur à /s'})
     table.insert(specs,{prefix..'Attempts',m.name..' • essais maximum (1–100)'})
    end
   end

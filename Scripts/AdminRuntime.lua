@@ -46,7 +46,7 @@ return function(ctx)
   local saved=profile().Inventory and profile().Inventory[uid]
   return saved and A.Items.Decode(saved),saved
  end
- local mutationIds={"Boss","Scrambled","Enchanted","Nitro","Spectral","Musical","Alien","DarkMatter","Blacklisted","Copper","Thunderous","GreatBloom"}
+ local mutationIds={"Boss","Scrambled","Enchanted","Nitro","Spectral","Musical","Alien","DarkMatter","Blacklisted","Copper","Thunderous","GreatBloom","Maple"}
  local waitUntil
  local function hasMutation(record,id)return record.BaseMutation==id or table.find(record.Mutations or{},id)~=nil end
  local function mutationTools()
@@ -70,6 +70,21 @@ return function(ctx)
    table.insert(result,{id=id,name=spec.Label or id,count=stock[id].count,successPercent=metric(chance),multiplier=metric(spec.EarningsScalar)})
   end
   return result
+ end
+ local function mutationSuccessPercent(id)
+  if id=="Enchanted" then return 100 end
+  local source=A.MutationFlags[id]
+  return metric(source and safe(function()return source:Get()end))or 0
+ end
+ local function mutationPriority(stock)
+  local ids={}
+  for _,id in ipairs(mutationIds)do if stock[id]and stock[id].count>0 then table.insert(ids,id)end end
+  table.sort(ids,function(a,b)
+   local ap,bp=mutationSuccessPercent(a),mutationSuccessPercent(b)
+   if ap~=bp then return ap>bp end
+   return a<b
+  end)
+  return ids
  end
  local function ledger()
   if A.MutationLedger then return A.MutationLedger end
@@ -138,14 +153,17 @@ return function(ctx)
   end
   table.sort(candidates,function(a,b)return a.rate>b.rate end)
   local stock=mutationTools()
-  for _,candidate in ipairs(candidates)do for _,id in ipairs(mutationIds)do
+  -- Auto Mutations applies every owned consumable.  The order is deterministic:
+  -- all 100% mutations before lower chances, then the most valuable egg first.
+  for _,candidate in ipairs(candidates)do for _,id in ipairs(mutationPriority(stock))do
    local prefix="Mutation"..id;local entry=ledger().entries[candidate.uid..":"..id]
-   if options[prefix.."Enabled"]and candidate.rate>options[prefix.."Min"]and stock[id].count>0 and not hasMutation(candidate.record,id)
-    and(not entry or not entry.blocked and entry.count<options[prefix.."Attempts"])then
+   local attempts=options[prefix.."Attempts"]or 1
+   if stock[id].count>0 and not hasMutation(candidate.record,id)
+    and(not entry or not entry.blocked and entry.count<attempts)then
     if os.clock()<(A.NextMutationAt or 0)then return true end
     A.NextMutationAt=os.clock()+2
     local lock={mutation=true};A.Busy=true;shared.__SEAAdminRequestLock=lock
-    local ok,why=pcall(A.ApplyMutation,candidate.uid,id,options[prefix.."Attempts"])
+    local ok,why=pcall(A.ApplyMutation,candidate.uid,id,attempts)
     releaseMutationTool();ctx.MutationLock(false);A.Busy=false;if shared.__SEAAdminRequestLock==lock then shared.__SEAAdminRequestLock=nil end
     if not ok then A.MutationStatus=tostring(why):sub(1,500);warn("[SEA Admin] "..A.MutationStatus)end
     pcall(A.Publish,true);return true
@@ -159,9 +177,10 @@ return function(ctx)
   local record=ownedEggs()[uid];if not record or not record.Placement then return false end
   local rate=eligibleMutationRate(record,options);if not rate then return false end
   local stock=mutationTools()
-  for _,id in ipairs(mutationIds)do
+  for _,id in ipairs(mutationPriority(stock))do
    local prefix="Mutation"..id;local entry=ledger().entries[uid..":"..id]
-   if options[prefix.."Enabled"]and rate>options[prefix.."Min"]and stock[id].count>0 and not hasMutation(record,id)and(not entry or not entry.blocked and entry.count<options[prefix.."Attempts"])then return true end
+   local attempts=options[prefix.."Attempts"]or 1
+   if stock[id].count>0 and not hasMutation(record,id)and(not entry or not entry.blocked and entry.count<attempts)then return true end
   end
   return false
  end
@@ -868,7 +887,7 @@ return function(ctx)
    A.Speed=module("Client.SpeedPowerProjection");A.Remotes=module("Shared.Remotes");A.Renderer=module("Shared.Eggs.PlacedEggRenderer")
    A.Kernel=module("Shared.Util.FuseKernel");A.Signals=module("Client.FuseMachineSignals");A.FuseTypes=module("Shared.Types.FuseMachine")
    A.MutationCatalog=module("Shared.Modules.Mutations.Catalog");A.MutationFlags={}
-   for id,spec in pairs({Boss={"Shared.Flags.BossMasteryFlags","MutationConsumableSuccessPercent"},Scrambled={"Shared.Flags.ScrambleMutationFlags","SuccessPercent"},Nitro={"Shared.Flags.RaceRallyFlags","NitroSuccessPercent"},Spectral={"Shared.Flags.TrainEventFlags","SpectralSuccessPercent"},Musical={"Shared.Flags.BossMasteryFlags","MusicalMutationSuccessPercent"},Alien={"Shared.Flags.UFOSightingsFlags","AlienMutationSuccessPercent"},DarkMatter={"Shared.Flags.AlienLagoonFlags","DarkMatterMutationSuccessPercent"},Blacklisted={"Shared.Flags.ItemFlags","BlacklistedMutationSuccessPercent"},Copper={"Shared.Flags.ItemFlags","CopperMutationSuccessPercent"},Thunderous={"Shared.Flags.ItemFlags","ThunderousMutationSuccessPercent"},GreatBloom={"Shared.Flags.ItemFlags","SpiritBloomMutationSuccessPercent"}})do
+   for id,spec in pairs({Boss={"Shared.Flags.BossMasteryFlags","MutationConsumableSuccessPercent"},Scrambled={"Shared.Flags.ScrambleMutationFlags","SuccessPercent"},Nitro={"Shared.Flags.RaceRallyFlags","NitroSuccessPercent"},Spectral={"Shared.Flags.TrainEventFlags","SpectralSuccessPercent"},Musical={"Shared.Flags.BossMasteryFlags","MusicalMutationSuccessPercent"},Alien={"Shared.Flags.UFOSightingsFlags","AlienMutationSuccessPercent"},DarkMatter={"Shared.Flags.AlienLagoonFlags","DarkMatterMutationSuccessPercent"},Blacklisted={"Shared.Flags.ItemFlags","BlacklistedMutationSuccessPercent"},Copper={"Shared.Flags.ItemFlags","CopperMutationSuccessPercent"},Thunderous={"Shared.Flags.ItemFlags","ThunderousMutationSuccessPercent"},GreatBloom={"Shared.Flags.ItemFlags","SpiritBloomMutationSuccessPercent"},Maple={"Shared.Flags.ItemFlags","MapleMutationSuccessPercent"}})do
     local flags=safe(module,spec[1]);A.MutationFlags[id]=flags and flags[spec[2]]
    end
    A.Initialized=true

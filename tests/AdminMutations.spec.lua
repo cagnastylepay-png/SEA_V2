@@ -16,7 +16,7 @@ function character:FindFirstChildOfClass()return humanoid end
 local backpack={GetChildren=function()return tool.Parent~=character and{tool}or{}end}
 local player={UserId=42,Character=character,FindFirstChild=function(_,k)return k=="Backpack"and backpack end}
 local teleport={GetTeleportSetting=function()return stored end,SetTeleportSetting=function(_,k,v)stored=v end}
-local opts={AutoMutations=true,MutationBossEnabled=true,MutationBossMin=100,MutationBossAttempts=2}
+local opts={AutoMutations=true,AutoEggsMin=100,MutationBossAttempts=2}
 local ctx={Report={SessionId="s",SettingsAllowed=false},Ready=function()return true end,CanMutate=function()return true end,Busy=function()return false end,GetOptions=function()return opts end,MutationLock=function(v)locked=v end}
 local env=setmetatable({shared={},game={GetService=function(_,k)if k=="Players"then return{LocalPlayer=player}elseif k=="TeleportService"then return teleport else return{}end end},os={clock=function()return clock end},task={spawn=function()end,wait=function(n)clock+=n end}}, {__index=getfenv()})
 local function boot()

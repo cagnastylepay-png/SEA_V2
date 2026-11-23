@@ -28,6 +28,8 @@ local CONFIG = {
 	Debug = true,
 	ProgressInterval = 0.5,
 	MoveRefresh = 0.1,
+	EventBatInterval = 0.05,
+	TurkeySnapDistance = 25,
 	ApproachRefresh = 4,
 	ApproachDistance = 8,
 	PreciseArrivalRadius = 3,
@@ -122,7 +124,7 @@ FusionModules.Options.AutoMutations=false
 FusionModules.Options.AutoSellAnimals=false
 FusionModules.Options.AutoSellAnimalsMin=0
 FusionModules.Options.AutoSellAnimalsMax=2e9
-for _,id in ipairs({"Boss","Scrambled","Enchanted","Nitro","Spectral","Musical","Alien","DarkMatter","Blacklisted","Copper","Thunderous","GreatBloom"})do
+for _,id in ipairs({"Boss","Scrambled","Enchanted","Nitro","Spectral","Musical","Alien","DarkMatter","Blacklisted","Copper","Thunderous","GreatBloom","Maple"})do
  FusionModules.Options["Mutation"..id.."Enabled"]=false
  FusionModules.Options["Mutation"..id.."Min"]=0
  FusionModules.Options["Mutation"..id.."Attempts"]=1
@@ -194,7 +196,7 @@ function FusionModules.Helpers.RestoreOptions(saved)
  if candidate.AutoSellAnimalsMin>candidate.AutoSellAnimalsMax then return false end
  if not FusionModules.Helpers.ValidMaxBiome(candidate.AutoEggsMaxBiome)then return false end
  if not FusionModules.Helpers.ValidHelpFavorites(candidate.HelpFavorites)then return false end
- for _,id in ipairs({"Boss","Scrambled","Enchanted","Nitro","Spectral","Musical","Alien","DarkMatter","Blacklisted","Copper","Thunderous","GreatBloom"})do local n=candidate["Mutation"..id.."Attempts"];if n%1~=0 or n<1 or n>100 then return false end end
+ for _,id in ipairs({"Boss","Scrambled","Enchanted","Nitro","Spectral","Musical","Alien","DarkMatter","Blacklisted","Copper","Thunderous","GreatBloom","Maple"})do local n=candidate["Mutation"..id.."Attempts"];if n%1~=0 or n<1 or n>100 then return false end end
  if FusionModules.AdminCollection then candidate.AutoHelp=false end
  FusionModules.Options=candidate
  minimumRatePerSecond=candidate.AutoEggsMin;autoIncludeMissingIndex=candidate.AutoIndex
@@ -4088,7 +4090,7 @@ function FusionModules.Skyfall.Run(token)
      elseif not recovering then
        local now=os.clock()
        if now>=nextSwing then
-        nextSwing=now+.1
+        nextSwing=now+CONFIG.EventBatInterval
         bat=FusionModules.BatCombat.EventStrike(character,humanoid,eventBats)
         if not bat then break end
         sky.EquippedBat=bat
@@ -4263,11 +4265,21 @@ function FusionModules.TurkeyRampage.Run(token)
     -- Refresh the King target at every Heartbeat. move() deliberately keeps
     -- its horizontal braking once the player reaches close combat range.
     move(targetPosition,{Radius=1.25})
+    -- After the safe-zone trajectory, converge on the live King CFrame in
+    -- direct segments of at most 25 studs. This includes Y and rotation so
+    -- the final player CFrame is exactly the King's, rather than a stale
+    -- horizontal approximation beside it.
+    local kingDistance=(root.Position-targetPosition).Magnitude
+    if kingDistance>.05
+     and not motionBlockReason({character=character})then
+     root.AssemblyLinearVelocity=Vector3.zero
+     root.CFrame=root.CFrame:Lerp(boss,math.min(1,CONFIG.TurkeySnapDistance/kingDistance))
+    end
     if dodging then dodging=false end
     if distanceXZ(root.Position,targetPosition)<=6 then
      local now=os.clock()
      if now>=nextSwing then
-      nextSwing=now+.1
+      nextSwing=now+CONFIG.EventBatInterval
       bat=FusionModules.BatCombat.EventStrike(character,humanoid,eventBats)
       if not bat then break end
       turkey.EquippedBat=bat
