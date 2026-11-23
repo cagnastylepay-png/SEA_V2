@@ -4242,6 +4242,7 @@ function FusionModules.TurkeyRampage.Run(token)
  if not bat then error("Turkey Rampage : aucune batte disponible",0)end
  turkey.EquippedBat=bat
   local nextSwing=0
+  local nextFollow=0
   local eventBats={}
   local dodging=false
  while targetActive()do
@@ -4269,14 +4270,14 @@ function FusionModules.TurkeyRampage.Run(token)
     local kingDistance=(root.Position-targetPosition).Magnitude
     if kingDistance>CONFIG.TurkeySnapDistance then
      move(targetPosition,{Radius=1.25})
-    elseif kingDistance>.05
-     and not motionBlockReason({character=character})then
-     root.AssemblyLinearVelocity=Vector3.zero
-     root.CFrame=root.CFrame:Lerp(boss,math.min(1,CONFIG.TurkeySnapDistance/kingDistance))
-    else
-     -- No residual MoveTo is allowed to pull the character away while the
-     -- King is stationary.  Only the explicit dangerous branch may unpin it.
+    elseif os.clock()>=nextFollow and not motionBlockReason({character=character})then
+     nextFollow=os.clock()+CONFIG.EventBatInterval
+     -- Cancel residual walking, then refresh the exact live CFrame every
+     -- 50 ms. A target that moved over 25 studs is approached in bounded
+     -- direct segments; the final segment is the King's exact CFrame.
      stopMovement(true)
+     root.AssemblyLinearVelocity=Vector3.zero
+     root.CFrame=root.CFrame:Lerp(boss,math.min(1,CONFIG.TurkeySnapDistance/math.max(kingDistance,.05)))
     end
     if dodging then dodging=false end
     if distanceXZ(root.Position,targetPosition)<=6 then
