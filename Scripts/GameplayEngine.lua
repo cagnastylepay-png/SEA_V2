@@ -85,6 +85,12 @@ local lastMaintenanceAt = -math.huge
 local inventoryEggRecords
 local inventoryPlacementBusy = false
 local placementRequest
+local RLGL_RED_REASON = "Red Light : mouvement en pause"
+-- Assigned once the native flight-zone checks are available. Keeping this
+-- predicate below the movement primitive lets every caller share one gate.
+local redLightMovementBlocked = function()
+	return false
+end
 local FusionModules = {}
 FusionModules.Helpers = {}
 FusionModules.AdminCollection = type(shared.__AutoSAEReportingOptions) == "table"
@@ -512,6 +518,11 @@ local function move(destination, options)
 	local stopping = options.Stop == true
 	local arrived = false
 	if not stopping and os.clock() < syncPauseUntil then return false, "synchronisation en cours" end
+	if not stopping and redLightMovementBlocked(root.Position) then
+		humanoid:Move(Vector3.zero)
+		humanoid:MoveTo(root.Position)
+		return false, RLGL_RED_REASON
+	end
 	if not stopping and movementResumePending then
 		movementResumePending = false
 		log("SYNC_DIAG", "Reprise du deplacement depuis la position actuelle apres correction")
@@ -713,6 +724,20 @@ function FusionModules.Helpers.GameplayEntryAllowed()
  return true
 end
 
+-- AdminAbuseClientController.Events.RedLightGreenLight uses RLGL_Giant as the
+-- event-presence attribute and RLGL_Light as its authoritative state. The
+-- event egg position is deliberately irrelevant: Red pauses every movement
+-- made inside the native theft field, eligible egg or not.
+redLightMovementBlocked = function(position)
+	if Workspace:GetAttribute("RLGL_Giant") == nil
+		or Workspace:GetAttribute("RLGL_Light") ~= "Red" then
+		return false
+	end
+	if typeof(position) ~= "Vector3" or isSafe(position) ~= false then return false end
+	local ok, allowed = pcall(FusionModules.Helpers.GameplayEntryAllowed)
+	return ok and allowed == true
+end
+
 local function validCycle(ctx)
 	if destroyed or not autoEnabled or generation ~= ctx.generation or currentCycle ~= ctx then
 		return false, "annule"
@@ -727,8 +752,9 @@ end
 -- Observe server movement effects; never cancel ragdoll, impulses, or server corrections.
 local function motionBlockReason(ctx)
 	if os.clock() < syncPauseUntil then return "correction de position en cours" end
-	local _, humanoid = getCharacterParts()
+	local _, humanoid, root = getCharacterParts()
 	if not humanoid then return "personnage absent" end
+	if root and redLightMovementBlocked(root.Position) then return RLGL_RED_REASON end
 	if ctx.character:GetAttribute("IsTrapped") == true then return "IsTrapped" end
 	if type(player.GetAttribute) == "function" and type(Workspace.GetServerTimeNow) == "function" then
 		local endsAt = player:GetAttribute("RagdollEndTime")
@@ -745,6 +771,27 @@ local function motionBlockReason(ctx)
 	end
 	return nil
 end
+
+-- Cancel an already-issued native MoveTo as soon as the light turns red. The
+-- ordinary movement loops keep running and issue their next command at Green.
+local redLightPauseActive = false
+connect(RunService.Heartbeat, function()
+	if destroyed or not ready then return end
+	local character, humanoid, root = getCharacterParts()
+	local blocked = character and humanoid and root and redLightMovementBlocked(root.Position)
+	if blocked then
+		humanoid:Move(Vector3.zero)
+		humanoid:MoveTo(root.Position)
+		if not redLightPauseActive then
+			redLightPauseActive = true
+			log("MOVE_PAUSED", "Phase=%s Raison=%s", tostring(currentCycle and currentCycle.phase or autoActivity), RLGL_RED_REASON)
+			setStatus("Red Light · déplacement en pause")
+		end
+	elseif redLightPauseActive then
+		redLightPauseActive = false
+		log("MOVE_RESUME", "Phase=%s Raison=Green Light", tostring(currentCycle and currentCycle.phase or autoActivity))
+	end
+end)
 
 local function observeRigRefresh(payload)
 	-- Verified in Controllers.Game.ObbyAntiTPClientController: JSON Action/Arguments.
@@ -789,7 +836,9 @@ local function waitForMotionReady(ctx)
 			stopMovement() -- Cancel walking only, not the physical server impulse.
 			log("MOVE_PAUSED", "Phase=%s Raison=%s", ctx.phase, reason)
 		end
-		if os.clock() - started >= CONFIG.MotionPauseTimeout then return false, "immobilisation serveur prolongee" end
+		if reason ~= RLGL_RED_REASON and os.clock() - started >= CONFIG.MotionPauseTimeout then
+			return false, "immobilisation serveur prolongee"
+		end
 		task.wait(0.05)
 	end
 	return false, "annule"
@@ -1390,7 +1439,19 @@ local function awaitCycleOperation(ctx, timeout, start)
 	end
 	local cancel = function() finish(false, "annule") end
 	ctx.cancelPendingWait = cancel
-	local timer = task.delay(timeout, function() finish(false, "delai depasse") end)
+	local timer = task.spawn(function()
+		local remaining, previous = timeout, os.clock()
+		while not completed and remaining > 0 do
+			task.wait(math.min(0.05, remaining))
+			local now = os.clock()
+			local _, _, root = getCharacterParts()
+			if not (root and redLightMovementBlocked(root.Position)) then
+				remaining -= now - previous
+			end
+			previous = now
+		end
+		if not completed then finish(false, "delai depasse") end
+	end)
 	local startOK, dispose = pcall(start, finish)
 	if not startOK then finish(false, tostring(dispose)) end
 	if not completed then signal.Event:Wait() end
@@ -1514,7 +1575,7 @@ local function approachEgg(ctx, destination)
 					log("MOVE_PAUSED", "Phase=APPROACH Raison=%s", blocked)
 				end
 				lastMoved = os.clock()
-				if os.clock() - pausedAt >= CONFIG.MotionPauseTimeout then
+				if blocked ~= RLGL_RED_REASON and os.clock() - pausedAt >= CONFIG.MotionPauseTimeout then
 					complete(false, "immobilisation serveur prolongee")
 				end
 				return
@@ -1834,8 +1895,10 @@ local function moveReturnLoop(ctx, destination)
 			return false, CARRY_LOST
 		end
 		if motionBlockReason(ctx) then
+			local pauseStarted = os.clock()
 			local resumed, pauseReason = waitForMotionReady(ctx)
 			if not resumed then return false, pauseReason end
+			started += os.clock() - pauseStarted
 			lastMoved, lastCommand, lastPosition = os.clock(), -math.huge, root.Position
 			continue
 		end
@@ -2581,6 +2644,7 @@ local function moveActivity(destination, token, interruptForEgg, nextDestination
 	local deadline = started + math.clamp(distanceXZ(root.Position, destination) / math.max(humanoid.WalkSpeed, 1) * 3 + 5, 8, 30)
 	local previous = root.Position
 	local nextCommand = 0
+	local redPauseStarted
 	while true do
   if autoActivity=="SKYFALL" and FusionModules.Skyfall.MoveValid and not FusionModules.Skyfall.MoveValid() then
    stopMovement(true);return false,"Skyfall interrompu"
@@ -2633,8 +2697,18 @@ local function moveActivity(destination, token, interruptForEgg, nextDestination
 			end
 			return true
 		end
-		if now >= deadline then stopMovement(true); return false, "MoveTo : destination non atteinte" end
-		if not motionBlockReason({character = character}) then
+		local blocked = motionBlockReason({character = character})
+		if blocked == RLGL_RED_REASON then
+			redPauseStarted = redPauseStarted or now
+		elseif redPauseStarted then
+			local pausedFor = now - redPauseStarted
+			deadline += pausedFor
+			started += pausedFor
+			lastMoved = now
+			redPauseStarted = nil
+		end
+		if blocked ~= RLGL_RED_REASON and now >= deadline then stopMovement(true); return false, "MoveTo : destination non atteinte" end
+		if not blocked then
 			local segment = Vector3.new(current.X-previous.X,0,current.Z-previous.Z)
 			local offset = Vector3.new(destination.X-previous.X,0,destination.Z-previous.Z)
 			if segment.Magnitude > 0.01 then
@@ -2824,9 +2898,19 @@ function FusionModules.Helpers.EnterGameplay(token,active)
   local deadline=os.clock()+math.clamp(distanceXZ(root.Position,destination)/math.max(humanoid.WalkSpeed,1)*3+4,5,20)
   setStatus("Franchissement a pied de l entree gameplay...")
   local nextMove=0
+  local redPauseStarted
   repeat
    if not activityValid(token,character)or FusionModules.CollectionReturnPending or (active and not active()) then return false,"entree annulee"end
-   if motionBlockReason({character=character})then return false,"personnage immobilise a l entree"end
+   local blocked=motionBlockReason({character=character})
+   if blocked==RLGL_RED_REASON then
+    redPauseStarted=redPauseStarted or os.clock()
+    RunService.Heartbeat:Wait()
+    continue
+   elseif blocked then return false,"personnage immobilise a l entree"end
+   if redPauseStarted then
+    deadline+=os.clock()-redPauseStarted
+    redPauseStarted=nil
+   end
    if os.clock()>=nextMove then humanoid:MoveTo(destination);nextMove=os.clock()+.2 end
    RunService.Heartbeat:Wait()
    allowed=FusionModules.Helpers.GameplayEntryAllowed()
@@ -6626,6 +6710,13 @@ shared.__AutoSAEController = {Destroy = destroy, Gui = gui, Reporting = FusionMo
    humanoid.Jump=false
    local ok,result=pcall(function()
     while valid()and character.Parent and root.Parent and humanoid.Health>0 do
+     if redLightMovementBlocked(root.Position)then
+      stopTween();stopWalk()
+      humanoid:Move(Vector3.zero,false)
+      humanoid:MoveTo(root.Position)
+      task.wait(.05)
+      continue
+     end
      local record=records[target]
      local point=getRecordPosition(record)
      assert(record and point and isTrackedFieldState(record),"L'oeuf cible a disparu")
