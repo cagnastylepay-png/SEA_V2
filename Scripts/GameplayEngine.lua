@@ -2122,19 +2122,31 @@ local function cleanupCycle(ctx)
 end
 
 local function getStartAreaDestination()
-	local world = Workspace:FindFirstChild("World")
-	local areas = world and world:FindFirstChild("Areas")
-	local area = areas and areas:FindFirstChild("StartArea")
 	local center
-	if area and area:IsA("BasePart") then
-		center = area.Position
-	elseif area and area:IsA("Model") and area:FindFirstChildWhichIsA("BasePart", true) then
-		local bounds = area:GetBoundingBox()
-		center = bounds.Position
+	if FusionModules.AdminCollection then
+		local stands = Workspace:FindFirstChild("Stands")
+		local pads = stands and stands:FindFirstChild("Pads")
+		local sellPrompt = pads and pads:FindFirstChild("SellPrompt")
+		if sellPrompt and sellPrompt:IsA("BasePart") then center = sellPrompt.Position end
+		if not center then return nil, "Workspace.Stands.Pads.SellPrompt introuvable ou sans position" end
+	else
+		local world = Workspace:FindFirstChild("World")
+		local areas = world and world:FindFirstChild("Areas")
+		local area = areas and areas:FindFirstChild("StartArea")
+		if area and area:IsA("BasePart") then
+			center = area.Position
+		elseif area and area:IsA("Model") and area:FindFirstChildWhichIsA("BasePart", true) then
+			local bounds = area:GetBoundingBox()
+			center = bounds.Position
+		end
+		if not center then return nil, "World.Areas.StartArea introuvable ou sans centre" end
 	end
-	if not center then return nil, "World.Areas.StartArea introuvable ou sans centre" end
 	local _, humanoid = getCharacterParts()
 	return center + Vector3.new(0, (humanoid and humanoid.HipHeight or 2) + 2, 0)
+end
+
+local function safeHomeName()
+	return FusionModules.AdminCollection and "SellPrompt" or "StartArea"
 end
 
 -- Help favorites only authorize assistance; they never receive Admin privileges or GO.
@@ -2936,7 +2948,7 @@ function FusionModules.Helpers.DepartSafe(token,active,requireGameplay)
   local departure,why=getStartAreaDestination()
   if not departure then return false,why end
   if distanceXZ(root.Position,departure)>CONFIG.PreciseArrivalRadius then
-   setStatus("Trajet vers le centre de StartArea...")
+   setStatus("Trajet vers "..safeHomeName().."...")
    local reached,reason=measureAction("TRAJET_STARTAREA",FusionModules.Helpers.PathMove,departure,token,active~=nil)
    if not reached then return false,reason end
   end
@@ -2970,7 +2982,7 @@ local function leaveTreadmill(token, activity)
 	if not treadmillAssigned and autoActivity ~= "TREADMILL" and autoActivity ~= "TO_TREADMILL" then return true end
 	local reason=activity or autoActivity
 	autoActivity = "LEAVING_TREADMILL"
-	setStatus("Sortie du tapis · "..tostring(reason).." · trajet vers StartArea…")
+	setStatus("Sortie du tapis · "..tostring(reason).." · trajet vers "..safeHomeName().."…")
 	local _, humanoid = getCharacterParts()
 	if treadmillAssigned then
 		local ok, reason = treadmillRequest(TreadmillRemotes.AskDoff, token)
@@ -2982,8 +2994,8 @@ local function leaveTreadmill(token, activity)
 	if humanoid then humanoid.Jump = true end
 	autoActivity = "FARM"
 	safeHome = getStartAreaDestination()
-	log("TREADMILL_EXIT_READY", "Sortie confirmee : pathfinding hors tapis vers StartArea")
- if not safeHome then return false,"StartArea indisponible"end
+	log("TREADMILL_EXIT_READY", "Sortie confirmee : pathfinding hors tapis vers %s",safeHomeName())
+ if not safeHome then return false,safeHomeName().." indisponible"end
  return FusionModules.Helpers.PathMove(safeHome,token,false)
 end
 
@@ -5787,7 +5799,7 @@ local function worker(token)
 			if not recovering and not directNext then
 				autoActivity = "TO_FARM"
 				local reached, reason = FusionModules.Helpers.DepartSafe(token,nil,false)
-				if not reached then if generation~=token or not autoEnabled then return end;if FusionModules.CollectionReturnPending then directNext=false;continue end;stopAutomation("StartArea : " .. tostring(reason)); return end
+				if not reached then if generation~=token or not autoEnabled then return end;if FusionModules.CollectionReturnPending then directNext=false;continue end;stopAutomation(safeHomeName().." : " .. tostring(reason)); return end
 			end
 			if not autoEnabled or generation ~= token then return end
 			local entered,entryReason=true,nil
@@ -5797,7 +5809,7 @@ local function worker(token)
     stopAutomation("Entree gameplay non confirmee : "..tostring(entryReason));return
    end
    autoActivity = "FARM"
-			log("FARM_START", "UID=%s : sortie StartArea atteinte, trajet vers l'oeuf", selected.Uid)
+			log("FARM_START", "UID=%s : sortie %s atteinte, trajet vers l'oeuf", selected.Uid,safeHomeName())
 			directNext = false
 			local success, reason = measureAction("VOL_COMPLET", runCycle, selected, rate, recovering, selectBest)
 			if not autoEnabled or generation ~= token then return end
