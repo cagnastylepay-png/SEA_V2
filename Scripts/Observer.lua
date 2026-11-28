@@ -58,14 +58,17 @@ function O.ReceiveSpread(target,manual,group)
   if not group or (O.SpreadTarget and O.SpreadTarget.group) then O.SpreadTarget=nil end
   return
  end
+ local destinationPlaceId=type(target)=="table"and(target.destinationPlaceId or target.placeId)or nil
  if type(target)~="table"or target.placeId~=tostring(game.PlaceId)or target.jobId~=game.JobId
   or (not manual and (type(target.keeperUserId)~="string" or not target.keeperUserId:match("^%d+$")
    or target.keeperUserId==tostring(player.UserId)))
+  or type(destinationPlaceId)~="string"or not destinationPlaceId:match("^%d+$")or #destinationPlaceId>20
   or type(target.destinationJobId)~="string"or target.destinationJobId==""or #target.destinationJobId>128
-  or target.destinationJobId==game.JobId then return end
+  or (destinationPlaceId==tostring(game.PlaceId)and target.destinationJobId==game.JobId)then return end
  local delay=tonumber(target.delaySeconds)
  if not delay or delay~=delay or delay<0 or delay>900 then return end
- O.SpreadTarget={keeperUserId=target.keeperUserId,jobId=target.jobId,destinationJobId=target.destinationJobId,manual=manual==true,group=group==true,deadline=manual and os.clock()+30 or nil}
+ O.SpreadTarget={keeperUserId=target.keeperUserId,jobId=target.jobId,destinationPlaceId=destinationPlaceId,
+  destinationJobId=target.destinationJobId,manual=manual==true,group=group==true,deadline=manual and os.clock()+30 or nil}
  O.SpreadAt=os.clock()+delay+(manual and 0 or math.random(0,8))
 end
 function O.TickSpread(now)
@@ -104,7 +107,9 @@ function O.TickSpread(now)
   if O.Destroyed or O.ClientKind~="observer"or O.SpreadTarget~=target or not O.Ready
    or (target.manual and os.clock()>=target.deadline)
    or (not target.manual and not Players:GetPlayerByUserId(tonumber(target.keeperUserId)))then O.SpreadTeleportAt=nil;return end
-  local ok,why=pcall(function()game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId,target.destinationJobId,player)end)
+  local ok,why=pcall(function()
+   game:GetService("TeleportService"):TeleportToPlaceInstance(tonumber(target.destinationPlaceId),target.destinationJobId,player)
+  end)
   if not ok then O.SpreadTeleportAt=nil;warn("[Observer] Changement de serveur : "..tostring(why))end
  end)
 end
