@@ -111,6 +111,7 @@ FusionModules.Options.AutoStormGlass=false
 FusionModules.Options.AutoSlickRick=false
 FusionModules.Options.AutoStormRush=false
 FusionModules.Options.AutoTurkeyRampage=true
+FusionModules.Options.AutoTundra=true
 FusionModules.Options.AutoPlotUpgrade=false
 FusionModules.Options.IdleMode="Treadmill"
 FusionModules.Options.AutoCosmicEclipse=false
@@ -420,7 +421,7 @@ local function loadSettings()
 		minimumRatePerSecond = minimum * 1e9
 	end
  for key,value in pairs(FusionModules.Options)do
-  if type(value)=="boolean"and key~="AutoCosmicEclipse"and key~="AutoSkyfall"and key~="GroupMode"and key~="AutoStormGlass"and key~="BetaMovement"and key~="AutoStormRush"and key~="AutoTurkeyRampage"and key~="AutoSlickRick"and key~="AutoPlotUpgrade"and key~="AutoTreadmillUpgrade"and key~="AutoHelp"and key~="AutoMutations"and key~="AutoSellAnimals"and not key:match("^Mutation")then FusionModules.Options[key]=automaticMode end
+  if type(value)=="boolean"and key~="AutoCosmicEclipse"and key~="AutoSkyfall"and key~="GroupMode"and key~="AutoStormGlass"and key~="BetaMovement"and key~="AutoStormRush"and key~="AutoTurkeyRampage"and key~="AutoTundra"and key~="AutoSlickRick"and key~="AutoPlotUpgrade"and key~="AutoTreadmillUpgrade"and key~="AutoHelp"and key~="AutoMutations"and key~="AutoSellAnimals"and not key:match("^Mutation")then FusionModules.Options[key]=automaticMode end
  end
  FusionModules.Options.AutoEggsMin=minimumRatePerSecond
  FusionModules.Options.AutoSellMax=minimumRatePerSecond
@@ -2677,6 +2678,10 @@ local function moveActivity(destination, token, interruptForEgg, nextDestination
   if autoActivity=="TURKEY_RAMPAGE" and FusionModules.TurkeyRampage.MoveValid and not FusionModules.TurkeyRampage.MoveValid() then
    stopMovement(true);return false,"Turkey Rampage interrompu"
   end
+  if autoActivity=="TUNDRA" and FusionModules.Tundra.MoveValid and not FusionModules.Tundra.MoveValid() then
+   stopMovement(true);return false,"Toundra interrompue"
+  end
+  if autoActivity=="TO_TREADMILL" and FusionModules.Tundra.Available() then stopMovement(true);return false,"toundra"end
   if autoActivity=="TO_TREADMILL" and FusionModules.TurkeyRampage.Available() then stopMovement(true);return false,"turkey rampage"end
   if autoActivity=="TO_TREADMILL" and FusionModules.StormRush.Available() then stopMovement(true);return false,"storm rush"end
   if autoActivity=="SLICK_RICK" and FusionModules.SlickRick.MoveValid and not FusionModules.SlickRick.MoveValid() then
@@ -3810,7 +3815,7 @@ function FusionModules.Butterflies.Idle(token)
  if tool.Parent~=character then humanoid:EquipTool(tool) end
  local function active()
   return activityValid(token,character) and automaticMode and not stopAfterFlight and next(queuedEggs)==nil
-   and b.Revision==revision and b.Available() and not FusionModules.SlickRick.Available() and not FusionModules.TurkeyRampage.Available()
+   and b.Revision==revision and b.Available() and not FusionModules.SlickRick.Available() and not FusionModules.Tundra.Available() and not FusionModules.TurkeyRampage.Available()
    and not FusionModules.Skyfall.Available() and not FusionModules.Helpers.FishingMode()
  end
  autoActivity="TO_BUTTERFLIES"
@@ -3839,7 +3844,7 @@ function FusionModules.Butterflies.Idle(token)
  local nextSwingAt=0
  setStatus("Papillons · collecte au filet")
  while FusionModules.Options.AutoPapillon and activityValid(token,character) and automaticMode and not stopAfterFlight
-  and b.Revision==revision and Workspace:GetServerTimeNow()<b.Until and not FusionModules.Skyfall.Available() and not FusionModules.Helpers.FishingMode() and not FusionModules.SlickRick.Available() and not FusionModules.TurkeyRampage.Available() do
+  and b.Revision==revision and Workspace:GetServerTimeNow()<b.Until and not FusionModules.Skyfall.Available() and not FusionModules.Helpers.FishingMode() and not FusionModules.SlickRick.Available() and not FusionModules.Tundra.Available() and not FusionModules.TurkeyRampage.Available() do
   local present,net=b.Available(true)
   if not present then break end
   if net.Parent~=character then humanoid:EquipTool(net) end
@@ -4118,7 +4123,7 @@ function FusionModules.Skyfall.Run(token)
  local function active()
   return activityValid(token,character) and automaticMode and not stopAfterFlight
    and not serverHopPending and not FusionModules.CollectionReturnPending
-   and next(queuedEggs)==nil and sky.Available()~=nil and not FusionModules.SlickRick.Available() and not FusionModules.TurkeyRampage.Available()
+   and next(queuedEggs)==nil and sky.Available()~=nil and not FusionModules.SlickRick.Available() and not FusionModules.Tundra.Available() and not FusionModules.TurkeyRampage.Available()
    and not FusionModules.StormRush.Available(true)
  end
  if player:GetAttribute("InAlienLagoon")==true then
@@ -4214,6 +4219,265 @@ function FusionModules.Skyfall.Idle(token)
  if bat and backpack and bat.Parent==player.Character then bat.Parent=backpack end
  if generation==token then stopMovement(true);autoActivity="IDLE" end
  if not ok then sky.RetryAt=os.clock()+10 else sky.RetryAt=os.clock()+1 end
+end
+
+-- Tundra progression uses the same authoritative hit proxies as the native
+-- client.  Meteorites, Frostbound monsters and dragons all opt into
+-- BatAutoSwing; rewards themselves remain entirely server-owned.
+FusionModules.Tundra={RetryAt=0,NextStateAt=0,State=nil,Tags=game:GetService("CollectionService")}
+
+function FusionModules.Tundra.Bind(remotes)
+ local tundra=FusionModules.Tundra
+ if FusionModules.Reporting.ClientKind~="admin" or not remotes.TundraBoss then return end
+ tundra.Remotes=remotes.TundraBoss
+ tundra.Util=require(ReplicatedStorage.Shared.Util.TundraBoss)
+end
+
+function FusionModules.Tundra.Profile()
+ local ok,profile=pcall(Save.Peek)
+ local data=ok and type(profile)=="table" and profile.TundraBoss
+ return type(data)=="table" and data or {}
+end
+
+function FusionModules.Tundra.FindItem(kind)
+ local util=FusionModules.Tundra.Util
+ local attribute=util and util.PlayerAttributes and util.PlayerAttributes.Item or "TundraItem"
+ for _,container in ipairs({player.Character,player:FindFirstChildOfClass("Backpack")})do
+  if container then for _,item in ipairs(container:GetChildren())do
+   if item:IsA("Tool")and item:GetAttribute(attribute)==kind then return item end
+  end end
+ end
+end
+
+function FusionModules.Tundra.Refresh(force)
+ local tundra=FusionModules.Tundra
+ if not tundra.Remotes then return nil end
+ local now=os.clock()
+ if not force and now<tundra.NextStateAt then return tundra.State end
+ tundra.NextStateAt=now+.25
+ local ok,state=pcall(function()return tundra.Remotes.AskState:InvokeServer()end)
+ if ok and type(state)=="table" then tundra.State=state end
+ return tundra.State
+end
+
+function FusionModules.Tundra.IsTarget(part)
+ if not part:IsA("BasePart")or not part:IsDescendantOf(Workspace)
+  or not FusionModules.Tundra.Tags:HasTag(part,"BatAutoSwing")then return false end
+ local health=part:GetAttribute("Health")
+ if type(health)~="number"or health<=0 then return false end
+ if part.Name=="TundraFrostboundSwing"or part.Name=="TundraDragonSwing"then return true end
+ return part.Name=="Swing"and part.Parent~=nil and part.Parent:FindFirstChild("FireGem")~=nil
+end
+
+function FusionModules.Tundra.SelectTarget(position)
+ local tundra=FusionModules.Tundra
+ local best,bestPriority,bestDistance
+ for _,part in ipairs(tundra.Tags:GetTagged("BatAutoSwing"))do
+  if tundra.IsTarget(part)then
+   local priority=part.Name=="Swing"and 1 or(part.Name=="TundraDragonSwing"and 2 or 3)
+   local distance=position and distanceXZ(position,part.Position)or 0
+   if not best or priority<bestPriority or(priority==bestPriority and distance<bestDistance)then
+    best,bestPriority,bestDistance=part,priority,distance
+   end
+  end
+ end
+ return best
+end
+
+function FusionModules.Tundra.FirstFreePodium(data)
+ local mask=tonumber(data.Podiums)or 0
+ for index=1,3 do if not bit32.btest(mask,bit32.lshift(1,index-1))then return index end end
+end
+
+function FusionModules.Tundra.FirstFreeSocket(altar)
+ if type(altar)~="table"or(altar.Phase~=nil and altar.Phase~="Open")then return nil end
+ local sockets=type(altar.Sockets)=="table"and altar.Sockets or {}
+ local count=(FusionModules.Tundra.Util and FusionModules.Tundra.Util.AltarSocketCount)or 6
+ for index=1,count do if sockets[index]==nil and sockets[tostring(index)]==nil then return index end end
+end
+
+function FusionModules.Tundra.Action(position)
+ local tundra=FusionModules.Tundra
+ local target=tundra.SelectTarget(position)
+ if target then return "COMBAT",target end
+ local data=tundra.Profile()
+ if not data.Thawed and(tonumber(data.GemsHeld)or 0)>0 then
+  local index=tundra.FirstFreePodium(data)
+  if index then return "GEM",index end
+ end
+ local state=tundra.Refresh()
+ if data.Thawed and tundra.FindItem("FrostHeart")then
+  local index=tundra.FirstFreeSocket(state and state.Altar)
+  if index then return "HEART",index end
+ end
+ -- The local hit proxy is created just after the authoritative state packet.
+ -- Keep the activity awake briefly instead of missing a meteor/fight at load.
+ if state and(type(state.Meteor)=="table"or type(state.Fight)=="table")then return "WAIT"end
+end
+
+function FusionModules.Tundra.Available()
+ local tundra=FusionModules.Tundra
+ if FusionModules.Reporting.ClientKind~="admin"or not FusionModules.Options.AutoTundra
+  or os.clock()<tundra.RetryAt or not tundra.Remotes or not tundra.Util then return nil end
+ return tundra.Action()
+end
+
+function FusionModules.Tundra.InFrontier()
+ local util=FusionModules.Tundra.Util
+ local attribute=util and util.PlayerAttributes and util.PlayerAttributes.InFrontier or "TundraInFrontier"
+ return player:GetAttribute(attribute)==true
+end
+
+function FusionModules.Tundra.Travel(direction,token,active)
+ local tundra=FusionModules.Tundra
+ local _,_,root=getCharacterParts()
+ if not root then return false,"personnage absent"end
+ local entering=direction=="In"
+ if entering==tundra.InFrontier()then return true end
+ local point=entering and tundra.Util.ArchPrompt or tundra.Util.ReturnCenter
+ point=typeof(point)=="CFrame"and point.Position or point
+ if typeof(point)~="Vector3"then return false,"portail Toundra introuvable"end
+ setStatus(entering and "Toundra · trajet vers Dragon World"or"Toundra · retour vers le monde principal")
+ local reached,reason=moveActivity(Vector3.new(point.X,root.Position.Y,point.Z),token,entering,nil,nil,5)
+ if not reached then return false,reason end
+ stopMovement(true)
+ tundra.Remotes.Act:FireServer("Travel",direction)
+ local deadline=os.clock()+10
+ while active()and os.clock()<deadline do
+  if tundra.InFrontier()==entering then return true end
+  task.wait(.1)
+ end
+ return false,"téléportation Toundra non confirmée"
+end
+
+function FusionModules.Tundra.Equip(item,humanoid)
+ if not item then return false end
+ if item.Parent~=player.Character then humanoid:EquipTool(item)end
+ return item.Parent==player.Character
+end
+
+function FusionModules.Tundra.Run(token)
+ local tundra=FusionModules.Tundra
+ local character,humanoid,root=getCharacterParts()
+ if not character or not humanoid or not root then return end
+ local function active()
+  return activityValid(token,character)and automaticMode and not stopAfterFlight
+   and not serverHopPending and not FusionModules.CollectionReturnPending
+   and next(queuedEggs)==nil and FusionModules.Options.AutoTundra and not FusionModules.SlickRick.Available()
+ end
+ if player:GetAttribute("InAlienLagoon")==true then
+  local runtime=FusionModules.AdminRuntime
+  if not runtime then return end
+  runtime.StopFishing()
+  if not runtime.LeaveFishingLagoon()then return end
+ end
+ if not active()then return end
+ local left,detail=leaveTreadmill(token)
+ if not left then error(tostring(detail),0)end
+ if not active()then return end
+ autoActivity="TUNDRA"
+ tundra.MoveValid=active
+ local initial=tundra.SelectTarget(root.Position)
+ local initialPoint=initial and initial.Position or tundra.Util.Podiums and tundra.Util.Podiums[1]
+ if initialPoint and not tundra.InFrontier()then
+  setStatus("Toundra · trajet vers l’activité")
+  local departed=FusionModules.Helpers.DepartSafe(token,active,isSafe(initialPoint)==false)
+  if not departed then tundra.MoveValid=nil;return end
+ end
+ local eventBats={}
+ local emptySince
+ while active()do
+  local action,value=tundra.Action(root.Position)
+  if not action then
+   emptySince=emptySince or os.clock()
+   if os.clock()-emptySince>=1.5 then break end
+   task.wait(.1)
+   continue
+  end
+  emptySince=nil
+  if action=="WAIT"then
+   setStatus("Toundra · attente de la cible")
+   task.wait(.15)
+   continue
+  end
+  local needsFrontier=action=="HEART"or(action=="COMBAT"and tundra.Util.InFrontier(value.Position))
+  if needsFrontier~=tundra.InFrontier()then
+   local travelled,reason=tundra.Travel(needsFrontier and"In"or"Out",token,active)
+   if not travelled then error("Toundra : "..tostring(reason),0)end
+   root=select(3,getCharacterParts())or root
+   continue
+  end
+  if action=="GEM"then
+   local point=tundra.Util.Podiums[value]
+   local item=tundra.FindItem("FireGem")
+   if not point or not item then task.wait(.1);continue end
+   setStatus("Toundra · dépôt de la Firestone "..value.."/3")
+   local reached,reason=moveActivity(Vector3.new(point.X,root.Position.Y,point.Z),token,true,nil,nil,4)
+   if not reached then error("Toundra : "..tostring(reason),0)end
+   if tundra.Equip(item,humanoid)then tundra.Remotes.Act:FireServer("Place",value)end
+   tundra.NextStateAt=0
+   task.wait(.6)
+  elseif action=="HEART"then
+   local point=tundra.Util.AltarSockets[value]
+   local item=tundra.FindItem("FrostHeart")
+   if not point or not item then task.wait(.1);continue end
+   setStatus("Toundra · dépôt d’un Frost Heart")
+   local reached,reason=moveActivity(Vector3.new(point.X,root.Position.Y,point.Z),token,true,nil,nil,4)
+   if not reached then error("Toundra : "..tostring(reason),0)end
+   if tundra.Equip(item,humanoid)then tundra.Remotes.Act:FireServer("Socket",value)end
+   tundra.NextStateAt=0
+   task.wait(.6)
+  elseif action=="COMBAT"then
+   local target=value
+   local bat=FusionModules.BatCombat.FindBest(character,player:FindFirstChildOfClass("Backpack"))
+   if not bat then error("Toundra : aucune batte disponible",0)end
+   tundra.EquippedBat=bat
+   setStatus(target.Name=="Swing"and"Toundra · destruction de la météorite"or(target.Name=="TundraDragonSwing"and"Toundra · combat du dragon"or"Toundra · combat Frostbound"))
+   local deadline=os.clock()+30
+   local lastHealth=target:GetAttribute("Health")
+   local nextFollow=0
+   while active()and tundra.IsTarget(target)and os.clock()<deadline do
+    local health=target:GetAttribute("Health")
+    if health~=lastHealth then lastHealth=health;deadline=os.clock()+30 end
+    local distance=(root.Position-target.Position).Magnitude
+    if distance>CONFIG.TurkeySnapDistance then
+     move(target.Position,{Radius=CONFIG.TurkeySnapDistance})
+    elseif not motionBlockReason({character=character})then
+     if os.clock()>=nextFollow then
+      nextFollow=os.clock()+CONFIG.EventBatInterval
+      stopMovement(true)
+      root.AssemblyLinearVelocity=Vector3.zero
+      character:PivotTo(target.CFrame)
+     end
+     bat=FusionModules.BatCombat.EventStrike(character,humanoid,eventBats)
+     if not bat then break end
+     tundra.EquippedBat=bat
+    end
+    RunService.Heartbeat:Wait()
+   end
+   stopMovement(true)
+  end
+ end
+ local function canReturn()
+  return activityValid(token,character)and automaticMode and not serverHopPending
+ end
+ if tundra.InFrontier()and canReturn()then
+  tundra.MoveValid=canReturn
+  tundra.Travel("Out",token,canReturn)
+ end
+ tundra.MoveValid=nil
+end
+
+function FusionModules.Tundra.Idle(token)
+ local tundra=FusionModules.Tundra
+ local ok=FusionModules.Protect("TUNDRA",tundra.Run,token)
+ tundra.MoveValid=nil
+ local bat=tundra.EquippedBat
+ tundra.EquippedBat=nil
+ local backpack=player:FindFirstChildOfClass("Backpack")
+ if bat and backpack and bat.Parent==player.Character then pcall(function()bat:Deactivate();bat.Parent=backpack end)end
+ if generation==token then stopMovement(true);autoActivity="IDLE"end
+ tundra.RetryAt=os.clock()+(ok and 1 or 8)
 end
 
 -- Turkey Rampage is rendered from an authoritative leg/state packet.  We only
@@ -4313,6 +4577,7 @@ function FusionModules.TurkeyRampage.Run(token)
   return activityValid(token,character) and automaticMode and not stopAfterFlight
    and not serverHopPending and not FusionModules.CollectionReturnPending
    and next(queuedEggs)==nil and turkey.Available()~=nil and not FusionModules.SlickRick.Available()
+   and not FusionModules.Tundra.Available()
  end
  if player:GetAttribute("InAlienLagoon")==true then
   local runtime=FusionModules.AdminRuntime
@@ -4434,12 +4699,12 @@ function FusionModules.Helpers.CanStartIdleActivity()
  return next(queuedEggs)==nil and not stopAfterFlight and not serverHopPending
   and not FusionModules.CollectionReturnPending
   and not (FusionModules.RemoteHop and FusionModules.RemoteHop.Pending)
-  and not FusionModules.SlickRick.Available() and not FusionModules.TurkeyRampage.Available()
+  and not FusionModules.SlickRick.Available() and not FusionModules.Tundra.Available() and not FusionModules.TurkeyRampage.Available()
 end
 
 function FusionModules.Helpers.TreadmillOnly()
  return FusionModules.Options.AutoTreadmill and FusionModules.Helpers.CanStartIdleActivity()
-  and not FusionModules.Helpers.FishingMode() and not FusionModules.Skyfall.Available() and not FusionModules.TurkeyRampage.Available()
+  and not FusionModules.Helpers.FishingMode() and not FusionModules.Skyfall.Available() and not FusionModules.Tundra.Available() and not FusionModules.TurkeyRampage.Available()
   and not FusionModules.Butterflies.Available()
 end
 
@@ -5571,7 +5836,7 @@ function FusionModules.Helpers.FishingIdle(token)
   local selected,rate=selectBest()
   if selected then FusionModules.Helpers.RequestFishingEgg(selected,rate)
   elseif FusionModules.RemoteHop.LocalReturnTarget then FusionModules.Helpers.ReturnForFishingEgg()
-  elseif FusionModules.SlickRick.Available() or FusionModules.TurkeyRampage.Available() or FusionModules.StormRush.Available(true) or FusionModules.Skyfall.Available() then break
+  elseif FusionModules.SlickRick.Available() or FusionModules.Tundra.Available() or FusionModules.TurkeyRampage.Available() or FusionModules.StormRush.Available(true) or FusionModules.Skyfall.Available() then break
   end
   task.wait(.1)
  end
@@ -5634,7 +5899,7 @@ local function idleOnTreadmill(token)
 	if destroyed or not autoEnabled or generation ~= token then return true end
 	setStatus("TREADMILL : entrainement, attente d'un oeuf...")
 	while autoEnabled and generation == token and automaticMode and not queuePaused
-		and not FusionModules.Helpers.FishingMode()and FusionModules.Options.AutoTreadmill and next(queuedEggs) == nil and not activityRecheckPending and not FusionModules.Butterflies.Available() and not FusionModules.Skyfall.Available() and not FusionModules.SlickRick.Available() and not FusionModules.TurkeyRampage.Available() and not FusionModules.StormRush.Available() and not FusionModules.Helpers.ExchangeRouteAvailable() and not destroyed do
+		and not FusionModules.Helpers.FishingMode()and FusionModules.Options.AutoTreadmill and next(queuedEggs) == nil and not activityRecheckPending and not FusionModules.Butterflies.Available() and not FusionModules.Skyfall.Available() and not FusionModules.SlickRick.Available() and not FusionModules.Tundra.Available() and not FusionModules.TurkeyRampage.Available() and not FusionModules.StormRush.Available() and not FusionModules.Helpers.ExchangeRouteAvailable() and not destroyed do
 		serviceWallMaintenance(token)
   if FusionModules.AdminRuntime and FusionModules.AdminRuntime.ProgressTravelling and FusionModules.AdminRuntime.ProgressTravelling()then task.wait(CONFIG.ScanInterval);continue end
 		if not treadmillAssigned or autoActivity ~= "TREADMILL" then return true end
@@ -5857,6 +6122,8 @@ local function worker(token)
 			directNext = false
 			if automaticMode and FusionModules.SlickRick.Available() then
                 FusionModules.SlickRick.Idle(token)
+            elseif automaticMode and FusionModules.Tundra.Available() then
+                FusionModules.Tundra.Idle(token)
             elseif automaticMode and FusionModules.TurkeyRampage.Available() then
                 FusionModules.TurkeyRampage.Idle(token)
             elseif automaticMode and FusionModules.StormRush.Available(true) then
@@ -5975,6 +6242,7 @@ local function initialize()
 	EggGrowthPolicy = loadModule("Shared.Eggs.PlacedEggGrowthPresentationPolicy")
 	local remotes = loadModule("Shared.Remotes")
  FusionModules.Protect("STORM_RUSH_INIT",FusionModules.StormRush.Bind,remotes)
+ FusionModules.Protect("TUNDRA_INIT",FusionModules.Tundra.Bind,remotes)
  FusionModules.Protect("TURKEY_RAMPAGE_INIT",FusionModules.TurkeyRampage.Bind,remotes)
 
  -- Subscribe before fetching so a late snapshot cannot overwrite a newer event.
@@ -6812,7 +7080,7 @@ shared.__AutoSAEController = {Destroy = destroy, Gui = gui, Reporting = FusionMo
   end,
   MoveForFishing=FusionModules.Helpers.MoveForFishing,
   FishingTravelValid=function()return not destroyed and automaticMode and autoEnabled and not queuePaused and not stopAfterFlight and not serverHopPending end,
-  FishingAutomaticValid=function()return not destroyed and automaticMode and autoEnabled and not queuePaused and not stopAfterFlight and not serverHopPending and FusionModules.Helpers.FishingMode() and not FusionModules.SlickRick.Available() and not FusionModules.TurkeyRampage.Available() and not FusionModules.StormRush.Available(true) and not FusionModules.Skyfall.Available()end,
+  FishingAutomaticValid=function()return not destroyed and automaticMode and autoEnabled and not queuePaused and not stopAfterFlight and not serverHopPending and FusionModules.Helpers.FishingMode() and not FusionModules.SlickRick.Available() and not FusionModules.Tundra.Available() and not FusionModules.TurkeyRampage.Available() and not FusionModules.StormRush.Available(true) and not FusionModules.Skyfall.Available()end,
   CanUpdateSettings=function(revision)
    local report=FusionModules.Reporting
    if type(revision)~="number" or revision>report.SettingsRevision or revision<(report.OptionsChangedRevision or 1) or not report.LastOptions then return false end
