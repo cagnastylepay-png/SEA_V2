@@ -4289,6 +4289,23 @@ function FusionModules.Tundra.FirstFreePodium(data)
  for index=1,3 do if not bit32.btest(mask,bit32.lshift(1,index-1))then return index end end
 end
 
+function FusionModules.Tundra.PodiumPrompt(index)
+ local name=("TundraPodium%d"):format(index)
+ for _,node in ipairs(Workspace:GetDescendants())do
+  if node:IsA("BasePart")and node.Name==name then
+   local prompt=node:FindFirstChildOfClass("ProximityPrompt")
+   if prompt then return prompt,node.Position end
+  end
+ end
+end
+
+function FusionModules.Tundra.GemPlaced(index,beforeGems,beforeMask)
+ local data=FusionModules.Tundra.Profile()
+ local mask=tonumber(data.Podiums)or 0
+ return bit32.btest(mask,bit32.lshift(1,index-1))
+  or(tonumber(data.GemsHeld)or 0)<beforeGems or mask~=beforeMask
+end
+
 function FusionModules.Tundra.FirstFreeSocket(altar)
  if type(altar)~="table"or(altar.Phase~=nil and altar.Phase~="Open")then return nil end
  local sockets=type(altar.Sockets)=="table"and altar.Sockets or {}
@@ -4408,15 +4425,48 @@ function FusionModules.Tundra.Run(token)
    continue
   end
   if action=="GEM"then
-   local point=tundra.Util.Podiums[value]
-   local item=tundra.FindItem("FireGem")
-   if not point or not item then task.wait(.1);continue end
-   setStatus("Toundra · dépôt de la Firestone "..value.."/3")
-   local reached,reason=moveActivity(Vector3.new(point.X,root.Position.Y,point.Z),token,true,nil,nil,4)
-   if not reached then error("Toundra : "..tostring(reason),0)end
-   if tundra.Equip(item,humanoid)then tundra.Remotes.Act:FireServer("Place",value)end
+   local data=tundra.Profile()
+   local beforeGems=tonumber(data.GemsHeld)or 0
+   local beforeMask=tonumber(data.Podiums)or 0
+   local confirmed,lastReason=false,"prompt du piédestal introuvable"
+   for attempt=1,3 do
+    if not active()or tundra.GemPlaced(value,beforeGems,beforeMask)then confirmed=true;break end
+    local prompt,point=tundra.PodiumPrompt(value)
+    point=point or tundra.Util.Podiums[value]
+    local item=tundra.FindItem("FireGem")
+    if not point or not item then lastReason="Firestone ou piédestal indisponible";task.wait(.25);continue end
+    setStatus(("Toundra · dépôt Firestone %d/3 · tentative %d/3"):format(value,attempt))
+    local reached,reason=moveActivity(Vector3.new(point.X,root.Position.Y,point.Z),token,true,nil,nil,1.25)
+    if not reached then lastReason=reason;continue end
+    stopMovement(true)
+    root.AssemblyLinearVelocity=Vector3.zero
+    character:PivotTo(CFrame.new(point)*root.CFrame.Rotation)
+    RunService.Heartbeat:Wait()
+    if not tundra.Equip(item,humanoid)then lastReason="Firestone non équipée";continue end
+    local fired=false
+    if prompt then
+     local wasEnabled=prompt.Enabled
+     prompt.Enabled=true
+     fired,lastReason=executorTools.WithPromptReach(prompt,math.max(20,prompt.MaxActivationDistance),executorTools.FirePrompt)
+     if not fired then
+      fired,lastReason=executorTools.WithPromptReach(prompt,math.max(20,prompt.MaxActivationDistance),executorTools.ActivateNativePrompt)
+     end
+     prompt.Enabled=wasEnabled
+    end
+    -- Same native call as the prompt closure, retained only as a final retry
+    -- when an executor cannot dispatch the real ProximityPrompt.
+    if not fired then tundra.Remotes.Act:FireServer("Place",value)end
+    local deadline=os.clock()+3
+    repeat
+     if tundra.GemPlaced(value,beforeGems,beforeMask)then confirmed=true;break end
+     task.wait(.1)
+    until not active()or os.clock()>=deadline
+    if confirmed then break end
+    lastReason="placement non confirmé par le jeu"
+   end
+   if not confirmed and active()then error("Toundra : "..tostring(lastReason),0)end
    tundra.NextStateAt=0
-   task.wait(.6)
+   task.wait(.25)
   elseif action=="HEART"then
    local point=tundra.Util.AltarSockets[value]
    local item=tundra.FindItem("FrostHeart")
