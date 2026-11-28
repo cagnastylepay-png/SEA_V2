@@ -323,7 +323,7 @@ return function(ctx)
   local frame=assert(ctx.FindSpot(plot,ownedEggs(),{}),"Aucun emplacement libre")
   local worn,why=A.EggState.WearEggTool(uid);assert(worn==true,why)
   if ctx.ManualCanContinue then assert(ctx.ManualCanContinue(),"Placement interrompu : priorite au vol")end
-  A.Dispatched=true;local accepted,reason=A.EggState.PlantEgg(uid,frame);assert(accepted==true,reason)
+  A.Dispatched=true;local accepted,reason=A.EggState.PlantEgg(uid,frame,0);assert(accepted==true,reason)
   return waitUntil(function()local e=ownedEggs()[uid];return e and e.Placement~=nil end,15)
  end
  local function walkToFusion()

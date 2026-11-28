@@ -3340,7 +3340,8 @@ local function placeInventoryEggsImpl(selection, token, opened)
                         if not latest or latest.Placement~=nil or not FusionModules.Helpers.CanPlaceInventoryEgg(latest,uid)then
                          return false,"Oeuf hors plage ou indisponible"
                         end
-						return EggState.PlantEgg(uid,localFrame)
+						-- No rejected placement attempts preceded this validated spot.
+						return EggState.PlantEgg(uid,localFrame,0)
 					end)
 					request.done=true
 					if placementRequest==request then placementRequest=nil end
