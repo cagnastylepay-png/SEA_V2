@@ -1,5 +1,7 @@
 -- Ovora Observer: reports, minute clicks, and server spreading for standalone clients.
 if shared.__SEAObserverController and not shared.__SEAObserverController.Destroyed then return shared.__SEAObserverController end
+local OBSERVER_SOURCE_URL="https://raw.githubusercontent.com/cagnastylepay-png/SEA_V2/main/Scripts/Observer.lua"
+local RELOAD_GUI_NAME="SEAObserverReloadGui"
 local O={Listeners={},SocketConnections={},ClientKind="observer",Serial=0,Connections={},Destroyed=false,Ready=false,IdentityReady=false,EggDirty=true,PlayerDirty=true,
  EggRevision=0,PlayerRevision=0,NextConnect=0,Backoff=2}
 local Players=game:GetService("Players")
@@ -132,7 +134,7 @@ function O.Disconnect()
  O.NextConnect=os.clock()+O.Backoff;O.Backoff=math.min(60,O.Backoff*2)
  O.Status("Reconnexion",false)
 end
-function O.Destroy()
+function O.Destroy(preserveReloadGui)
  if O.Destroyed then return end
  O.Destroyed=true
  if shared.__SEAObserverController==O then shared.__SEAObserverController=nil end
@@ -140,8 +142,43 @@ function O.Destroy()
  O.Disconnect()
  for _,connection in ipairs(O.Connections)do pcall(function()connection:Disconnect()end)end
  if O.Socket then pcall(function()O.Socket:Close()end)end
+ if not preserveReloadGui and O.ReloadGui then O.ReloadGui:Destroy();O.ReloadGui=nil end
 end
 shared.__SEAObserverController=O
+function O.RemoveReloadGui()
+ if O.ReloadGui then O.ReloadGui:Destroy();O.ReloadGui=nil end
+end
+function O.InstallReloadGui()
+ if O.Destroyed or O.ClientKind~="observer"or shared.__SEAAdminBoot then return end
+ if O.ReloadGui and O.ReloadGui.Parent then return end
+ local guiParent=player:FindFirstChildOfClass("PlayerGui")
+ if not guiParent then guiParent=player:WaitForChild("PlayerGui",10)end
+ if not guiParent then return end
+ local old=guiParent:FindFirstChild(RELOAD_GUI_NAME)
+ if old then old:Destroy()end
+ local gui=Instance.new("ScreenGui")
+ gui.Name=RELOAD_GUI_NAME;gui.ResetOnSpawn=false;gui.IgnoreGuiInset=true;gui.DisplayOrder=1000000;gui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
+ local button=Instance.new("TextButton")
+ button.Name="Reload";button.AnchorPoint=Vector2.new(1,0);button.Position=UDim2.new(1,-12,0,12);button.Size=UDim2.fromOffset(120,42)
+ button.BackgroundColor3=Color3.fromRGB(24,35,53);button.BorderColor3=Color3.fromRGB(93,118,158);button.BorderSizePixel=1
+ button.AutoButtonColor=true;button.Font=Enum.Font.GothamSemibold;button.Text="Reload";button.TextColor3=Color3.fromRGB(240,246,255);button.TextSize=18
+ button.Parent=gui;gui.Parent=guiParent;O.ReloadGui=gui
+ local reloading=false
+ button.Activated:Connect(function()
+  if reloading then return end
+  reloading=true;button.Text="Reload..."
+  local fetched,source=pcall(function()return game:HttpGet(OBSERVER_SOURCE_URL)end)
+  if not fetched then warn("[Observer Reload] Telechargement impossible : "..tostring(source));button.Text="Reload";reloading=false;return end
+  local latest,failure=loadstring(source,"SEA_V2/Observer")
+  if not latest then warn("[Observer Reload] Compilation impossible : "..tostring(failure));button.Text="Reload";reloading=false;return end
+  task.defer(function()
+   pcall(O.Destroy,true)
+   local ok,reason=pcall(latest)
+   if not ok then warn("[Observer Reload] Redemarrage impossible : "..tostring(reason));button.Text="Reload";reloading=false end
+  end)
+ end)
+end
+O.InstallReloadGui()
 function O.Subscribe(callback)
  O.Listeners[callback]=true
  return function()O.Listeners[callback]=nil end
@@ -150,6 +187,7 @@ function O.Configure(kind,owner,url,token)
  assert(kind=="observer"or kind=="hub"or kind=="admin","Role invalide")
  local changed=O.ClientKind~=kind or O.Url~=url or O.Token~=token
  O.Owner=owner;O.ClientKind=kind;O.Url=url;O.Token=token
+ if kind=="observer"then O.InstallReloadGui()else O.RemoveReloadGui()end
  if changed then O.Disconnect();O.NextConnect=0 end
 end
 function O.Release(owner)

@@ -1,0 +1,15 @@
+return function(source)
+ assert(source:find('local RELOAD_GUI_NAME="SEAObserverReloadGui"',1,true),'Observer Reload GUI needs its own stable name')
+ local _,screenCount=source:gsub('Instance.new%("ScreenGui"%)','')
+ local _,buttonCount=source:gsub('Instance.new%("TextButton"%)','')
+ assert(screenCount==1 and buttonCount==1,'Observer Reload GUI must contain only its single button')
+ assert(source:find('gui.ResetOnSpawn=false',1,true),'Observer Reload GUI must survive character respawns')
+ assert(source:find('button.Activated:Connect',1,true),'Observer Reload must support mouse, touch and gamepad activation')
+ local fetch=assert(source:find('game:HttpGet(OBSERVER_SOURCE_URL)',1,true))
+ local compile=assert(source:find('loadstring(source,"SEA_V2/Observer")',fetch,true))
+ local destroy=assert(source:find('pcall(O.Destroy,true)',compile,true))
+ local restart=assert(source:find('pcall(latest)',destroy,true))
+ assert(fetch<compile and compile<destroy and destroy<restart,'Latest Observer must be fetched and compiled before the running one is stopped')
+ assert(source:find('if kind=="observer"then O.InstallReloadGui()else O.RemoveReloadGui()end',1,true),'Admin and hub roles must not display the Observer button')
+ return 'Observer reload passed: one persistent role-aware button and retry-safe restart.'
+end
