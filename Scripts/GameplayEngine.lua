@@ -1177,6 +1177,8 @@ do
    if FusionModules.RemoteHop then FusionModules.RemoteHop.Receive(message)end
   elseif message.type=="settings.ack"and message.sessionId==report.SessionId then
    if report.SettingsPending==message.revision then report.SettingsPending=nil end
+  elseif message.type=="settings.request"and(message.sessionId==nil or message.sessionId==report.SessionId)then
+   report.MarkSettingsDirty()
   elseif message.type=="logs.ack"and message.sessionId==report.SessionId then
    local upto=tonumber(message.sequence)
    if upto then while executorTools.RemoteLogQueue[1]and executorTools.RemoteLogQueue[1].sequence<=upto do table.remove(executorTools.RemoteLogQueue,1)end end
