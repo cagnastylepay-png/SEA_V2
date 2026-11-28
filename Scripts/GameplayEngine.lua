@@ -2125,31 +2125,23 @@ local function cleanupCycle(ctx)
 end
 
 local function getStartAreaDestination()
+	local world = Workspace:FindFirstChild("World")
+	local areas = world and world:FindFirstChild("Areas")
+	local area = areas and areas:FindFirstChild("StartArea")
 	local center
-	if FusionModules.AdminCollection then
-		local stands = Workspace:FindFirstChild("Stands")
-		local pads = stands and stands:FindFirstChild("Pads")
-		local sellPrompt = pads and pads:FindFirstChild("SellPrompt")
-		if sellPrompt and sellPrompt:IsA("BasePart") then center = sellPrompt.Position end
-		if not center then return nil, "Workspace.Stands.Pads.SellPrompt introuvable ou sans position" end
-	else
-		local world = Workspace:FindFirstChild("World")
-		local areas = world and world:FindFirstChild("Areas")
-		local area = areas and areas:FindFirstChild("StartArea")
-		if area and area:IsA("BasePart") then
-			center = area.Position
-		elseif area and area:IsA("Model") and area:FindFirstChildWhichIsA("BasePart", true) then
-			local bounds = area:GetBoundingBox()
-			center = bounds.Position
-		end
-		if not center then return nil, "World.Areas.StartArea introuvable ou sans centre" end
+	if area and area:IsA("BasePart") then
+		center = area.Position
+	elseif area and area:IsA("Model") and area:FindFirstChildWhichIsA("BasePart", true) then
+		local bounds = area:GetBoundingBox()
+		center = bounds.Position
 	end
+	if not center then return nil, "Workspace.World.Areas.StartArea introuvable ou sans centre" end
 	local _, humanoid = getCharacterParts()
 	return center + Vector3.new(0, (humanoid and humanoid.HipHeight or 2) + 2, 0)
 end
 
 local function safeHomeName()
-	return FusionModules.AdminCollection and "SellPrompt" or "StartArea"
+	return "StartArea"
 end
 
 -- Help favorites only authorize assistance; they never receive Admin privileges or GO.
